@@ -60,3 +60,7 @@ app/static/uploads/user_*/
 # Temporary files
 *.tmp
 update_readme.ps1
+
+# GitHub Copilot instructions
+.github/copilot-instructions.md
+
