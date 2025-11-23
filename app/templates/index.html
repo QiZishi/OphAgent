@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="灵瞳眼科智慧诊疗系统 - 专业的眼科影像诊断AI助手">
+    <meta name="robots" content="noindex, nofollow">
+    <title>灵瞳眼科智慧诊疗系统</title>
+    
+    <!-- 预加载关键资源 -->
+    <link rel="preload" href="/static/css/style.css" as="style">
+    <link rel="preload" href="/static/icons/system_logo.png" as="image">
+    
+    <!-- 样式文件 -->
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/components/sidebar.css">
+    <link rel="stylesheet" href="/static/css/components/chat.css">
+    <link rel="stylesheet" href="/static/css/components/input.css">
+    <link rel="stylesheet" href="/static/css/utilities.css">
+    <link rel="stylesheet" href="/static/css/responsive.css">
+    
+    <!-- 外部库 - 优先加载Lucide图标库 -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <script defer src="https://unpkg.com/typeit@8.7.1/dist/index.umd.js"></script>
+    <script defer src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script defer src="https://unpkg.com/docx@8.2.2/build/index.js"></script>
+</head>
+<body>
+    <div id="app-container">
+        <!-- 侧边栏 -->
+        <aside id="sidebar" role="navigation" aria-label="主导航">
+            <!-- 1. 顶部Logo与折叠按钮 -->
+            <div class="sidebar-header">
+                <img src="/static/icons/system_logo.png" class="logo" alt="灵瞳眼科智慧诊疗系统Logo" loading="eager">
+                <span class="sidebar-text logo-text">灵瞳</span>
+                <button id="sidebar-toggle-btn" class="control-btn" aria-label="切换侧边栏" title="切换侧边栏">
+                    <i data-lucide="panel-left-close" aria-hidden="true"></i>
+                </button>
+            </div>
+
+            <!-- 2. 新建对话按钮 -->
+            <div class="sidebar-section">
+                <button id="new-chat-btn" aria-label="新建对话">
+                    <i data-lucide="plus-circle" aria-hidden="true"></i>
+                    <span class="sidebar-text">新建对话</span>
+                </button>
+            </div>
+
+            <!-- 3. 五大智能体选择模块 -->
+            <div class="sidebar-section agent-selector">
+                <h3 class="sidebar-text section-title">智能体</h3>
+                <button class="agent-btn" data-agent="interactive_vqa" data-tooltip="智能问答" aria-label="智能问答智能体">
+                    <span class="agent-icon" aria-hidden="true">💬</span><span class="sidebar-text">智能问答</span>
+                </button>
+                <button class="agent-btn" data-agent="lesion_localizer" data-tooltip="病灶定位" aria-label="病灶定位智能体">
+                    <span class="agent-icon" aria-hidden="true">🎯</span><span class="sidebar-text">病灶定位</span>
+                </button>
+                <button class="agent-btn" data-agent="aux_diagnosis" data-tooltip="辅助诊断" aria-label="辅助诊断智能体">
+                    <span class="agent-icon" aria-hidden="true">🩺</span><span class="sidebar-text">辅助诊断</span>
+                </button>
+                <button class="agent-btn" data-agent="report_generator" data-tooltip="报告生成" aria-label="报告生成智能体">
+                    <span class="agent-icon" aria-hidden="true">📄</span><span class="sidebar-text">报告生成</span>
+                </button>
+                <button class="agent-btn" data-agent="knowledge_base" data-tooltip="眼科知识库" aria-label="眼科知识库智能体">
+                    <span class="agent-icon" aria-hidden="true">🧠</span><span class="sidebar-text">眼科知识库</span>
+                </button>
+            </div>
+
+            <!-- 4. 历史记录 -->
+            <div class="sidebar-section history-section">
+                <h3 class="sidebar-text section-title">历史对话</h3>
+                <div class="search-container">
+                    <input type="text" id="conversation-search" class="sidebar-text search-input" 
+                           placeholder="搜索对话..." aria-label="搜索历史对话">
+                    <i data-lucide="search" class="search-icon" aria-hidden="true"></i>
+                </div>
+                <div class="scrollable" id="history-list" role="list" aria-label="历史对话列表">
+                    <!-- JS动态填充 -->
+                </div>
+            </div>
+              
+            <!-- 5. 底部用户菜单 -->
+            <div class="sidebar-footer" id="user-menu" tabindex="0" role="button" aria-label="用户菜单">
+                <img src="/static/icons/user_avatar.png" class="avatar" alt="用户头像" loading="lazy">
+                <span class="sidebar-text username" aria-live="polite"></span>
+                <div class="user-menu-popup" role="menu" aria-hidden="true">
+                    <button id="logout-btn" role="menuitem">退出登录</button>
+                    <button id="switch-account-btn" role="menuitem">切换账号</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main id="main-content" role="main">
+            <!-- 顶部导航栏 -->
+            <header id="header" role="banner">
+                <div class="header-content">
+                    <h1 id="conversation-title">选择智能体开始对话</h1>
+                </div>
+            </header>
+
+            <!-- 对话内容区 -->
+            <div id="chat-container">
+                <div id="chat-messages" role="log" aria-live="polite" aria-label="对话消息">
+                    <!-- 欢迎消息 -->
+                    <div id="welcome-message" class="welcome-container">
+                        <div class="welcome-content">
+                            <img src="/static/icons/system_logo.png" class="welcome-logo" alt="灵瞳眼科智慧诊疗系统" loading="eager">
+                            <h2>欢迎使用灵瞳眼科智慧诊疗系统</h2>
+                            <p>请从左侧或下方选择一个智能体开始您的诊疗之旅</p>
+                            <div class="agent-grid" role="group" aria-label="智能体选择">
+                                <div class="agent-card" data-agent="interactive_vqa" tabindex="0" role="button" 
+                                     aria-label="智能问答 - 上传影像进行自由问答">
+                                    <span class="agent-icon" aria-hidden="true">💬</span>
+                                    <h3>智能问答</h3>
+                                    <p>上传眼科影像进行自由问答</p>
+                                </div>
+                                <div class="agent-card" data-agent="lesion_localizer" tabindex="0" role="button"
+                                     aria-label="病灶定位 - 自动识别标注病灶区域">
+                                    <span class="agent-icon" aria-hidden="true">🎯</span>
+                                    <h3>病灶定位</h3>
+                                    <p>自动识别标注病灶区域</p>
+                                </div>
+                                <div class="agent-card" data-agent="aux_diagnosis" tabindex="0" role="button"
+                                     aria-label="辅助诊断 - 提供多种诊断可能性">
+                                    <span class="agent-icon" aria-hidden="true">🩺</span>
+                                    <h3>辅助诊断</h3>
+                                    <p>提供多种眼科疾病辅助诊断可能性</p>
+                                </div>
+                                <div class="agent-card" data-agent="report_generator" tabindex="0" role="button"
+                                     aria-label="报告生成 - 自动生成诊断报告">
+                                    <span class="agent-icon" aria-hidden="true">📄</span>
+                                    <h3>报告生成</h3>
+                                    <p>自动生成眼科疾病诊疗报告</p>
+                                </div>
+                                <div class="agent-card" data-agent="knowledge_base" tabindex="0" role="button"
+                                     aria-label="眼科知识库 - 查询眼科专业知识">
+                                    <span class="agent-icon" aria-hidden="true">🧠</span>
+                                    <h3>眼科知识库</h3>
+                                    <p>查询眼科专业知识</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 消息将动态插入这里 -->
+                </div>
+            </div>
+
+            <!-- 输入区域 -->
+            <div class="input-area-container">
+                <div class="input-area">
+                    <button id="upload-btn" class="control-btn" title="上传PDF文件或图片" aria-label="上传文件">
+                        <i data-lucide="paperclip" aria-hidden="true"></i>
+                    </button>
+                    <div class="input-wrapper">
+                        <!-- 文件预览区域移到文本框上方 -->
+                        <div id="file-preview-area" style="display:none;" aria-label="已选择的文件"></div>
+                        <label for="user-input" class="sr-only">输入消息</label>
+                        <textarea id="user-input" placeholder="给灵瞳发送消息..." rows="1" 
+                                  aria-label="输入消息" aria-describedby="footer-disclaimer"></textarea>
+                    </div>
+                    <button id="fullscreen-btn" class="control-btn" title="全屏输入 (Ctrl+Enter)" aria-label="全屏输入">
+                        <i data-lucide="maximize-2" aria-hidden="true"></i>
+                    </button>
+                    <button id="send-btn" class="control-btn send-btn" title="发送消息" aria-label="发送消息">
+                        <i data-lucide="send" aria-hidden="true"></i>
+                    </button>
+                    <button id="interrupt-btn" class="control-btn interrupt-btn" style="display: none;" title="中断对话" aria-label="中断对话">
+                        <i data-lucide="square" aria-hidden="true"></i>
+                    </button>
+                </div>
+                <p id="footer-disclaimer" class="footer-disclaimer">内容由AI生成，仅供参考，如有不适请立即就医。</p>
+            </div>
+        </main>
+    </div>
+
+    <!-- 加载状态遮罩 -->
+    <div id="loading-overlay" style="display: none;" aria-hidden="true">
+        <div class="loading-indicator">
+            <div class="loading-dots">
+                <div class="loading-dot"></div>
+                <div class="loading-dot"></div>
+                <div class="loading-dot"></div>
+            </div>
+            <span>正在处理...</span>
+        </div>
+    </div>
+
+    <!-- 文件上传隐藏输入 -->
+    <input type="file" id="file-input" accept=".pdf,.jpg,.jpeg,.png,.gif,.bmp,.webp" 
+           multiple style="display: none;" aria-label="选择文件上传">
+
+    <!-- 屏幕阅读器专用内容 -->
+    <div class="sr-only">
+        <p id="screen-reader-status" aria-live="polite" aria-atomic="true"></p>
+    </div>
+
+    <!-- 加载脚本 -->
+    <!-- 工具类优先加载 -->
+    <script defer src="/static/js/utils.js"></script>
+    <script defer src="/static/js/utils/errorHandler.js"></script>
+    <script defer src="/static/js/utils/performance.js"></script>
+    <script defer src="/static/js/utils/accessibility.js"></script>
+    
+    <!-- 功能模块 -->
+    <script defer src="/static/js/performance.js"></script>
+    <script defer src="/static/js/mobile.js"></script>
+    <script defer src="/static/js/auth.js"></script>
+    
+    <!-- 核心功能 -->
+    <script defer src="/static/js/api.js"></script>
+    <script defer src="/static/js/websocket.js"></script>
+    <script defer src="/static/js/ui.js"></script>
+    
+    <!-- 智能体专属UI -->
+    <script defer src="/static/js/agents/interactive_vqa.js"></script>
+    <script defer src="/static/js/agents/lesion_localizer.js"></script>
+    <script defer src="/static/js/agents/aux_diagnosis.js"></script>
+    <script defer src="/static/js/agents/report_generator.js"></script>
+    <script defer src="/static/js/agents/knowledge_base.js"></script>
+    
+    <!-- 主应用逻辑 -->
+    <script defer src="/static/js/main.js"></script>
+    <script defer>
+        // 确保Lucide图标库加载完成后初始化图标
+        document.addEventListener('DOMContentLoaded', function() {
+            const checkLucide = () => {
+                if (typeof lucide !== 'undefined') {
+                    lucide.createIcons();
+                } else {
+                    setTimeout(checkLucide, 100);
+                }
+            };
+            checkLucide();
+        });
+    </script>
+</body>
+</html>
+

@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlmodel
+aiosqlite
+passlib[bcrypt]
+python-jose[cryptography]
+python-multipart
+websockets
+python-dotenv
+pydantic-settings
+jinja2
+openai
+pymupdf
+python-docx
+beautifulsoup4

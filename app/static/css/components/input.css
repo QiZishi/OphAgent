@@ -1,0 +1,226 @@
+/* 输入区域组件样式 */
+
+/* 输入区域 */
+.input-area-container {
+    padding: 24px;
+    background: white;
+    border-top: 1px solid #e1e5e9;
+    flex-shrink: 0;
+}
+
+.input-area {
+    max-width: 800px;
+    margin: 0 auto;
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    background: white;
+    border: 2px solid #e1e5e9;
+    border-radius: 12px;
+    padding: 8px;
+    transition: border-color 0.2s ease;
+}
+
+.input-wrapper {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.input-area:focus-within {
+    border-color: #4A90E2;
+    box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.1);
+}
+
+#user-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    resize: none;
+    font-size: 16px;
+    line-height: 1.5;
+    padding: 8px 12px;
+    max-height: 120px;
+    overflow-y: auto;
+    border-radius: 6px;
+}
+
+#user-input::placeholder {
+    color: #888;
+}
+
+.input-area .control-btn {
+    color: #666;
+    flex-shrink: 0;
+    background: #f8f9fa;
+    border: 1px solid #e1e5e9;
+    border-radius: 6px;
+    padding: 8px 12px;
+    transition: all 0.2s ease;
+}
+
+.input-area .control-btn:hover {
+    color: #4A90E2;
+    background: #f5f5f5;
+    border-color: #4A90E2;
+}
+
+/* 发送按钮特殊样式 */
+#send-btn, .send-btn {
+    background: #4A90E2 ;
+    color: white ;
+    border-color: #4A90E2 ;
+}
+
+#send-btn:hover, .send-btn:hover {
+    background: #357abd ;
+    border-color: #357abd ;
+}
+
+/* 中断按钮特殊样式 */
+#interrupt-btn, .interrupt-btn {
+    background: #dc3545 ;
+    color: white ;
+    border-color: #dc3545 ;
+}
+
+/* 确保当send-btn元素添加了interrupt-btn类时，中断按钮样式优先级更高 */
+#send-btn.interrupt-btn {
+    background: #dc3545 ;
+    color: white ;
+    border-color: #dc3545 ;
+}
+
+#send-btn.interrupt-btn:hover {
+    background: #c82333 ;
+    border-color: #c82333 ;
+}
+
+#interrupt-btn:hover, .interrupt-btn:hover {
+    background: #c82333 ;
+    border-color: #c82333 ;
+}
+
+/* 上传按钮特殊样式 */
+#upload-btn {
+    background: white !important;
+    color: #666 !important;
+    border-color: #e1e5e9 !important;
+}
+
+#upload-btn:hover {
+    background: #f8f9fa !important;
+    border-color: #4A90E2 !important;
+    color: #4A90E2 !important;
+}
+
+.input-area .control-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.footer-disclaimer {
+    text-align: center;
+    font-size: 12px;
+    color: #888;
+    margin-top: 12px;
+}
+
+/* 文件预览区域 */
+#file-preview-area {
+    margin-bottom: 8px;
+    padding: 8px;
+    background: #f8f9fa;
+    border-radius: 6px;
+    border: 1px solid #e1e5e9;
+}
+
+.file-preview-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px;
+    background: white;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    border: 1px solid #ddd;
+}
+
+.file-preview-item:last-child {
+    margin-bottom: 0;
+}
+
+.file-preview-icon {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+}
+
+.file-preview-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.file-preview-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-preview-size {
+    font-size: 12px;
+    color: #666;
+}
+
+.file-remove-btn {
+    background: none;
+    border: none;
+    color: #999;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 4px;
+    transition: color 0.2s ease;
+}
+
+.file-remove-btn:hover {
+    color: #e74c3c;
+    background: #fee;
+}
+
+/* 加载状态 */
+.loading-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+    color: #666;
+    font-size: 14px;
+}
+
+.loading-dots {
+    display: flex;
+    gap: 4px;
+}
+
+.loading-dot {
+    width: 6px;
+    height: 6px;
+    background: #4A90E2;
+    border-radius: 50%;
+    animation: loading-bounce 1.4s ease-in-out infinite both;
+}
+
+.loading-dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes loading-bounce {
+    0%, 80%, 100% {
+        transform: scale(0);
+    }
+    40% {
+        transform: scale(1);
+    }
+}

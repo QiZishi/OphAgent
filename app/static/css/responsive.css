@@ -1,0 +1,412 @@
+/* 响应式设计和移动端适配 */
+
+/* 平板设备 */
+@media (max-width: 1024px) {
+    #sidebar {
+        width: 240px;
+    }
+    
+    #app-container.sidebar-collapsed #sidebar {
+        width: 70px;
+    }
+    
+    #chat-container {
+        padding: 16px;
+    }
+    
+    .input-area-container {
+        padding: 16px;
+    }
+}
+
+/* 移动设备 */
+@media (max-width: 768px) {
+    #app-container {
+        flex-direction: column;
+    }
+    
+    #sidebar {
+        width: 100%;
+        height: auto;
+        position: fixed;
+        top: 0;
+        left: -100%;
+        z-index: 1000;
+        transition: left 0.3s ease;
+        box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+    }
+    
+    #app-container.sidebar-open #sidebar {
+        left: 0;
+    }
+    
+    #app-container.sidebar-collapsed #sidebar {
+        width: 100%;
+        left: -100%;
+    }
+    
+    #main-content {
+        width: 100%;
+        margin-left: 0;
+    }
+    
+    /* 移动端头部 */
+    #header {
+        padding: 0 16px;
+        height: 56px;
+    }
+    
+    .header-content {
+        position: relative;
+    }
+    
+    #conversation-title {
+        font-size: 16px;
+        padding-left: 40px; /* 为汉堡菜单按钮留出空间 */
+    }
+    
+    /* 汉堡菜单按钮 */
+    .mobile-menu-btn {
+        display: none;
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        z-index: 1001;
+        background: #4A90E2;
+        color: white;
+        border: none;
+        border-radius: 50%;
+        width: 44px;
+        height: 44px;
+        cursor: pointer;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+        transition: all 0.3s ease;
+    }
+    
+    .mobile-menu-btn:hover {
+        background: #357ABD;
+        transform: scale(1.05);
+    }
+    
+    .mobile-menu-btn svg {
+        width: 20px;
+        height: 20px;
+    }
+    
+    /* 聊天区域移动端优化 */
+    #chat-container {
+        padding: 12px;
+    }
+    
+    #chat-messages {
+        max-width: 100%;
+    }
+    
+    .message-bubble {
+        padding: 12px 16px;
+    }
+    
+    .user-message .message-bubble {
+        margin-left: 20px;
+    }
+    
+    .model-message .message-bubble {
+        margin-right: 20px;
+    }
+    
+    /* 欢迎界面移动端 */
+    .welcome-container {
+        min-height: 300px;
+        padding: 20px;
+    }
+    
+    .welcome-content h2 {
+        font-size: 24px;
+    }
+    
+    .agent-grid {
+        grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+        gap: 12px;
+    }
+    
+    .agent-card {
+        padding: 16px;
+    }
+    
+    .agent-card .agent-icon {
+        font-size: 24px;
+    }
+    
+    .agent-card h3 {
+        font-size: 14px;
+    }
+    
+    .agent-card p {
+        font-size: 12px;
+    }
+    
+    /* 输入区域移动端 */
+    .input-area-container {
+        padding: 12px;
+    }
+    
+    .input-area {
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    
+    .input-wrapper {
+        order: 2;
+        width: 100%;
+    }
+    
+    #user-input {
+        font-size: 16px; /* 防止iOS自动缩放 */
+    }
+    
+    .control-btn {
+        order: 1;
+    }
+    
+    #send-btn {
+        order: 3;
+    }
+}
+
+/* 小屏手机 */
+@media (max-width: 480px) {
+    .welcome-content h2 {
+        font-size: 20px;
+    }
+    
+    .agent-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+    
+    .message-container .avatar {
+        width: 28px;
+        height: 28px;
+    }
+    
+    .user-message .message-bubble {
+        margin-left: 10px;
+    }
+    
+    .model-message .message-bubble {
+        margin-right: 10px;
+    }
+}
+
+/* 横屏模式优化 */
+@media (max-height: 500px) and (orientation: landscape) {
+    .welcome-container {
+        min-height: 200px;
+    }
+    
+    .welcome-logo {
+        width: 60px;
+        height: 60px;
+    }
+    
+    .welcome-content h2 {
+        font-size: 20px;
+        margin-bottom: 8px;
+    }
+    
+    .welcome-content p {
+        margin-bottom: 16px;
+    }
+    
+    .agent-grid {
+        margin-top: 16px;
+    }
+}
+
+/* 可访问性增强 */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+    
+    .spinner {
+        animation: none;
+    }
+    
+    .loading-dot {
+        animation: none;
+    }
+}
+
+/* 高对比度模式 */
+@media (prefers-contrast: high) {
+    .message-bubble {
+        border: 2px solid #000;
+    }
+    
+    .agent-card {
+        border: 2px solid #000;
+    }
+    
+    .input-area {
+        border: 2px solid #000;
+    }
+}
+
+/* 深色模式支持 */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: #1a1a1a;
+        --bg-secondary: #2d2d2d;
+        --text-primary: #ffffff;
+        --text-secondary: #cccccc;
+        --border-color: #404040;
+    }
+    
+    body {
+        background-color: var(--bg-primary);
+        color: var(--text-primary);
+    }
+    
+    #main-content {
+        background-color: var(--bg-primary);
+    }
+    
+    #header {
+        background: var(--bg-secondary);
+        border-color: var(--border-color);
+    }
+    
+    .message-bubble {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+    }
+    
+    .welcome-container {
+        background: var(--bg-primary);
+    }
+    
+    .agent-card {
+        background: var(--bg-secondary);
+        border-color: var(--border-color);
+        color: var(--text-primary);
+    }
+    
+    .input-area-container {
+        background: var(--bg-secondary);
+        border-color: var(--border-color);
+    }
+    
+    .input-area {
+        background: var(--bg-secondary);
+        border-color: var(--border-color);
+    }
+    
+    #user-input {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+    }
+}
+
+/* 补充响应式设计的动画样式 */
+@keyframes slideOutToRight {
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+/* 移动端菜单按钮 */
+.mobile-menu-btn {
+    display: none;
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    z-index: 1001;
+    background: #4A90E2;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 44px;
+    height: 44px;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s ease;
+}
+
+.mobile-menu-btn:hover {
+    background: #357ABD;
+    transform: scale(1.05);
+}
+
+.mobile-menu-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
+/* 侧边栏遮罩 */
+.sidebar-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 999;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+
+.sidebar-overlay.active {
+    opacity: 1;
+}
+
+/* 高对比度模式 */
+.high-contrast {
+    filter: contrast(150%);
+}
+
+.high-contrast .message-bubble {
+    border: 2px solid #000;
+}
+
+.high-contrast .agent-card {
+    border: 2px solid #000;
+}
+
+.high-contrast .input-area {
+    border: 2px solid #000;
+}
+
+/* 跳转链接样式 */
+.skip-links {
+    position: absolute;
+    top: -100px;
+    left: 0;
+    z-index: 1000;
+}
+
+.skip-link {
+    position: absolute;
+    top: -40px;
+    left: 6px;
+    background: #000;
+    color: #fff;
+    padding: 8px 12px;
+    text-decoration: none;
+    border-radius: 4px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: top 0.3s ease;
+    border: 2px solid #fff;
+}
+
+.skip-link:focus {
+    top: 6px;
+}
+
+.skip-link:hover {
+    background: #333;
+}

@@ -1,0 +1,321 @@
+/* 侧边栏组件样式 */
+
+/* 侧边栏样式 */
+#sidebar {
+    width: 260px;
+    background: linear-gradient(180deg, #4A90E2 0%, #357ABD 100%);
+    display: flex;
+    flex-direction: column;
+    transition: width 0.3s ease;
+    position: relative;
+    z-index: 100;
+    height: 100vh; /* 确保侧边栏占满整个视口高度 */
+}
+
+#app-container.sidebar-collapsed #sidebar {
+    width: 80px;
+}
+
+.sidebar-text {
+    color: #FFFFFF;
+    opacity: 1;
+    transition: opacity 0.2s ease;
+    white-space: nowrap;
+    overflow: hidden;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+#app-container.sidebar-collapsed .sidebar-text {
+    opacity: 0;
+    width: 0;
+}
+
+/* 侧边栏头部 */
+.sidebar-header {
+    display: flex;
+    align-items: center;
+    padding: 20px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    gap: 12px;
+}
+
+#app-container.sidebar-collapsed .sidebar-header {
+    justify-content: center;
+    padding: 20px 8px;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+#app-container.sidebar-collapsed .logo {
+    margin: 0 auto; /* 确保图标居中 */
+}
+
+.logo-text {
+    font-size: 18px;
+    font-weight: 600;
+    flex: 1;
+}
+
+/* 收起状态下的折叠按钮位置调整 */
+#app-container.sidebar-collapsed #sidebar-toggle-btn {
+    position: absolute;
+    top: 60px; /* 调整到logo下方 */
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(255, 255, 255, 0.2);
+    z-index: 10;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    margin-top: 8px;
+}
+
+/* 收起状态下的智能体按钮样式 */
+#app-container.sidebar-collapsed .agent-selector {
+    display: block;
+    padding: 8px;
+}
+
+#app-container.sidebar-collapsed .agent-selector .section-title {
+    display: none;
+}
+
+#app-container.sidebar-collapsed .agent-btn {
+    justify-content: center;
+    padding: 10px;
+    margin-bottom: 8px;
+    border-radius: 8px;
+    min-height: 44px;
+    position: relative; /* 添加相对定位以支持悬浮提示 */
+}
+
+#app-container.sidebar-collapsed .agent-btn .agent-icon {
+    font-size: 20px;
+    margin: 0;
+}
+
+/* 收起状态下的新建对话按钮 */
+#app-container.sidebar-collapsed #new-chat-btn {
+    margin-bottom: 12px;
+    min-height: 44px;
+    border-radius: 8px;
+    position: relative; /* 添加相对定位以支持悬浮提示 */
+}
+
+/* 收起状态下隐藏历史记录 */
+#app-container.sidebar-collapsed .history-section {
+    display: none;
+}
+
+/* 收起状态下的侧边栏布局 */
+#app-container.sidebar-collapsed #sidebar {
+    align-items: stretch;
+}
+
+/* 侧边栏章节 */
+.sidebar-section {
+    padding: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sidebar-section:last-child {
+    border-bottom: none;
+}
+
+.section-title {
+    font-size: 16px;
+    font-weight: 500;
+    margin-bottom: 12px;
+    opacity: 0.9;
+}
+
+/* 新建对话按钮 */
+#new-chat-btn {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: #FFFFFF;
+    padding: 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 16px;
+    font-weight: 500;
+    transition: background-color 0.2s ease;
+}
+
+#new-chat-btn:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+#app-container.sidebar-collapsed #new-chat-btn {
+    padding: 8px;
+    justify-content: center;
+}
+
+/* 智能体按钮 */
+.agent-btn {
+    width: 100%;
+    background: none;
+    border: none;
+    color: #FFFFFF;
+    padding: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px;
+    font-weight: 500;
+    margin-bottom: 4px;
+    transition: background-color 0.2s ease;
+    text-align: left;
+}
+
+.agent-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.agent-btn.active {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.agent-icon {
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+/* 侧边栏底部 */
+.sidebar-footer {
+    padding: 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    position: relative;
+    margin-top: auto; /* 确保用户区域在底部 */
+}
+
+.sidebar-footer:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* 收起状态下的用户区域样式 */
+#app-container.sidebar-collapsed .sidebar-footer {
+    justify-content: center;
+    padding: 16px 8px;
+}
+
+#app-container.sidebar-collapsed .sidebar-footer .avatar {
+    margin: 0; /* 头像居中 */
+}
+
+#app-container.sidebar-collapsed .sidebar-footer .username {
+    display: none; /* 隐藏用户名 */
+}
+
+#app-container.sidebar-collapsed .user-menu-popup {
+    left: 8px;
+    right: 8px;
+}
+
+.avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.username {
+    font-size: 14px;
+    flex: 1;
+}
+
+.user-menu-popup {
+    position: absolute;
+    bottom: 100%;
+    left: 16px;
+    right: 16px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    padding: 8px;
+    display: none;
+    z-index: 1000;
+}
+
+.user-menu-popup button {
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 8px 12px;
+    text-align: left;
+    cursor: pointer;
+    color: #333;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.user-menu-popup button:hover {
+    background: #f5f5f5;
+}
+
+/* 收起状态下的智能体悬浮提示 */
+#app-container.sidebar-collapsed .agent-btn::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    margin-left: 8px;
+    z-index: 1000;
+}
+
+#app-container.sidebar-collapsed .agent-btn:hover::after {
+    opacity: 1;
+}
+
+/* 收起状态下的新建对话按钮悬浮提示 */
+#app-container.sidebar-collapsed #new-chat-btn::after {
+    content: "新建对话";
+    position: absolute;
+    left: 100%;
+    top: 50%;
+    transform: translateY(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+    margin-left: 8px;
+    z-index: 1000;
+}
+
+#app-container.sidebar-collapsed #new-chat-btn:hover::after {
+    opacity: 1;
+}
