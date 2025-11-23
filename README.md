@@ -379,8 +379,8 @@ class Settings(BaseSettings):
 
 ## 🙏 致谢
 
-- 眼科医学专家的专业指导
-- 开源社区的技术支持
+- 书生Intern的开源模型支持：https://github.com/OpenGVLab/InternVL
+- Datawhale开源社区的技术支持: https://www.datawhale.cn/
 
 ---
 
