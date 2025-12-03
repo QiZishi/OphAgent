@@ -164,11 +164,26 @@ Edit `app/core/config.py` to adapt to different deployment environments.
 3. **Database Issues**
    - Run `python init_db.py` to re-initialize.
 
-## 11. Acknowledgements
+## 11. Open Source Status
+
+### ✅ Open Sourced
+- **System Architecture Code**: Complete frontend/backend code, API interfaces, database models
+- **Partial Datasets**: OphReason-Vision dataset subset
+- **System Demo Video**: Complete system function demonstration
+
+### 🔄 To Be Released
+- **Full Datasets**: Complete OphReason-Vision dataset
+- **Model Weights**: OphVLM-R1 model weights
+- **Model Training Scripts**: Cold-start fine-tuning and curriculum reinforcement learning scripts
+- **Model Evaluation Code**: Model performance evaluation code
+
+> **Note**: Full datasets, model weights, and training code will be released in batches after completing medical data privacy and ethical reviews.
+
+## 12. Acknowledgements
 
 The successful progress of this project relies on the key support from the InternLM Practical Camp, the InternLM Ecosystem, and the Datawhale Open Source Community. We sincerely thank these open-source communities for providing a solid foundation for this project and jointly promoting the development of the ophthalmic AI field.
 
-## 12. Related Links
+## 13. Related Links
 
 - **System Demo Video**: https://www.bilibili.com/video/BV1g4UTBZEEm/
 - **Open Source Code**: https://github.com/QiZishi/OphAgent/
