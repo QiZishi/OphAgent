@@ -170,10 +170,10 @@ The successful progress of this project relies on the key support from the Inter
 
 ## 12. Related Links
 
-- **System Demo Video**: [Bilibili](https://www.bilibili.com/video/BV1g4UTBZEEm/) https://www.bilibili.com/video/BV1g4UTBZEEm/
-- **Open Source Code**: [GitHub](https://github.com/QiZishi/OphAgent/) https://github.com/QiZishi/OphAgent/
-- **OphReason-Vision Dataset**: [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision) https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
-- **InternVL Open Source**: [GitHub](https://github.com/OpenGVLab/InternVL) https://github.com/OpenGVLab/InternVL
-- **InternLM Online Experience**: [InternAI](https://chat.intern-ai.org.cn/) https://chat.intern-ai.org.cn/
-- **InternLM Practical Camp**: [InternLM Practical Camp](https://colearn.intern-ai.org.cn/go) https://colearn.intern-ai.org.cn/go
-- **Datawhale Open Source Community**: [Datawhale](https://www.datawhale.cn/) https://www.datawhale.cn/
+- **System Demo Video**: https://www.bilibili.com/video/BV1g4UTBZEEm/
+- **Open Source Code**: https://github.com/QiZishi/OphAgent/
+- **OphReason-Vision Dataset**: https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
+- **InternVL Open Source**: https://github.com/OpenGVLab/InternVL
+- **InternLM Online Experience**: https://chat.intern-ai.org.cn/
+- **InternLM Practical Camp**: https://colearn.intern-ai.org.cn/go
+- **Datawhale Open Source Community**: https://www.datawhale.cn/

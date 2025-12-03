@@ -180,10 +180,10 @@ OphAgent/
 
 ## 12. 相关链接
 
-- **灵瞳眼科智慧诊疗系统应用演示视频**：[Bilibili](https://www.bilibili.com/video/BV1g4UTBZEEm/) https://www.bilibili.com/video/BV1g4UTBZEEm/
-- **项目开源代码**：[GitHub](https://github.com/QiZishi/OphAgent/) https://github.com/QiZishi/OphAgent/
-- **OphReason-Vision数据集**：[ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision) https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
-- **InternVL 开源链接**：[GitHub](https://github.com/OpenGVLab/InternVL) https://github.com/OpenGVLab/InternVL
-- **书生大模型在线体验**：[InternAI](https://chat.intern-ai.org.cn/) https://chat.intern-ai.org.cn/
-- **书生大模型实战营**：[书生大模型实战营](https://colearn.intern-ai.org.cn/go) https://colearn.intern-ai.org.cn/go
-- **Datawhale开源社区**：[Datawhale](https://www.datawhale.cn/) https://www.datawhale.cn/
+- **灵瞳眼科智慧诊疗系统应用演示视频**：https://www.bilibili.com/video/BV1g4UTBZEEm/
+- **项目开源代码**：https://github.com/QiZishi/OphAgent/
+- **OphReason-Vision数据集**：https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
+- **InternVL 开源链接**：https://github.com/OpenGVLab/InternVL
+- **书生大模型在线体验**：https://chat.intern-ai.org.cn/
+- **书生大模型实战营**：https://colearn.intern-ai.org.cn/go
+- **Datawhale开源社区**：https://www.datawhale.cn/
