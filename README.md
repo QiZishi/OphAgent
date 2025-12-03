@@ -1,399 +1,179 @@
-﻿# "灵瞳"眼科智慧诊疗系统
+# <img src="figures/system_logo.png" width="40" /> "LingTong" Ophthalmic Intelligent Diagnosis System
 
-![慧眼·灵析Logo](app/static/icons/system_logo.png)
+[English](README.md) | [简体中文](README_zh.md)
 
+## 1. Project Introduction
 
-## 📋 To Do List - 开源路线图
+**"LingTong" Ophthalmic Intelligent Diagnosis System** is a specialized medical AI platform built upon the self-developed **OphVLM-R1 Ophthalmic Multimodal Reasoning Large Model**. Developed by the AI Safety Laboratory team at the School of Artificial Intelligence and Automation, Huazhong University of Science and Technology, this project aims to address the global disparity in high-quality ophthalmic medical resources and the high rates of misdiagnosis and missed diagnosis in primary medical institutions.
 
-### ✅ 已开源内容
-- [x] **系统应用代码**：完整的前后端代码、API 接口、数据库模型
-- [x] **ReAct Agent 架构实现**：五大智能体的完整实现代码与提示工程
-- [x] **部署文档**：环境配置、安装指南、API 文档
-- [x] **开发指南**：智能体开发规范、系统架构说明
+Based on the InternLM ecosystem (InternVL3, Intern-S1), the system adopts the **ReAct (Reasoning + Acting) agent architecture** and integrates five professional AI agents: Interactive VQA, Lesion Localization, Diagnostic Assistant, Report Generation, and Ophthalmic Knowledge Base. Through innovative dataset construction methods, a two-stage training architecture, and the ReAct agent system, it achieves a leap in ophthalmic intelligent diagnosis from "perceptual recognition" to "cognitive reasoning," providing clinical practitioners with an efficient, transparent, and trustworthy auxiliary diagnosis solution.
 
-### 🔄 计划开源内容
-- [ ] **模型权重**：OphVLM-R1 眼科多模态推理大模型权重文件
-- [ ] **训练数据集**：眼科影像标注数据、多模态训练语料
-- [ ] **测试数据集**：OmniMedVQA-Eye 评估数据、性能基准测试集
-- [ ] **模型训练代码**：预训练与微调脚本、训练配置文件
+**Core Objective**: To empower clinicians, especially primary healthcare workers, with AI technology to enhance early screening and precise diagnosis capabilities for ophthalmic diseases.
 
-> **说明**：模型权重和数据集将在完成医学数据隐私与伦理审查后分批开源，预计在后续版本中发布。请关注本仓库的 Release 页面获取最新进展。
+## 2. Quick Start
 
-## 🎯 项目简介
-
-**"灵瞳"眼科智慧诊疗系统**是基于自主研发的"慧眼·灵析"眼科多模态推理大模型(OphVLM-R1)构建的专业化医疗 AI 平台。系统采用**ReAct (Reasoning + Acting) 智能体架构**作为核心技术框架，集成了五大专业 AI 智能体，专门针对眼科影像分析和诊断任务进行深度优化，为医生提供高效、精准的智能诊疗支持。
-
-**系统实机演示视频链接**：
-https://www.bilibili.com/video/BV1g4UTBZEEm/
-
-欢迎各位同仁批评指正！
-
-**核心技术亮点**：
-- 🧠 **OphVLM-R1 模型驱动**：2B 参数的眼科专用多模态推理大模型
-- 🔄 **ReAct 架构设计**：每个智能体均采用"推理-行动"循环机制，实现可解释的诊疗决策
-- 🎯 **五大专业智能体**：覆盖问答、定位、诊断、报告、知识库等全流程诊疗需求
-
-### 🧠 核心技术优势
-
-本系统采用"慧眼·灵析"眼科多模态推理大模型(OphVLM-R1\)作为底层 AI 引擎，结合ReAct智能体架构，实现了可解释、可追溯的智能诊疗决策流程。
-
-#### 模型层面优势
-- **模型规模**：2B 参数量的轻量化设计，在保证性能的同时大幅降低部署成本
-- **专业性强**：专门针对眼科领域进行预训练和微调，具备深度的眼科医学知识
-- **多模态理解**：支持眼底照片、OCT、眼前节照片等多种眼科影像类型
-- **推理效率**：优化的模型架构确保快速响应，满足临床实时应用需求
-
-#### ReAct 架构优势
-- **可解释性**：每个智能体的决策过程分为 Reasoning \(思考\) 和 Acting \(行动\) 两个阶段，医生可清晰了解 AI 的推理路径
-- **迭代优化**：通过思考-行动循环，智能体能够自我修正和优化诊断建议
-- **模块化设计**：统一的 ReAct 框架使得智能体易于扩展和维护
-- **临床适配**：符合医生的临床思维模式，降低 AI 系统的使用门槛
-
-## 📊 模型性能对比分析
-
-### "慧眼·灵析"眼科多模态推理大模型的显著优势
-
-基于最新的性能评估结果，"慧眼·灵析"眼科多模态推理大模型(Ours-2B-Preview)在 OmniMedVQA-Eye 眼科医学问答数据集上展现出了卓越的性能：
-
-| 模型类别           | 模型名称            | 域内（判断题）准确率 | 域内（选择题）准确率 | 域外（OmniMedVQA-Eye）准确率 |
-| ------------------ | ------------------- | -------------------- | -------------------- | ---------------------------- |
-| **通用多模态模型** | InternVL3-1B        | 41.60%               | 26.60%               | 48.78%                       |
-|                    | InternVL3-2B        | 56.40%               | 34.70%               | 64.07%                       |
-|                    | InternVL3-8B        | 65.40%               | 34.70%               | 71.06%                       |
-|                    | Qwen2.5VL-3B        | 51.70%               | 34.40%               | 56.26%                       |
-|                    | Qwen2.5VL-7B        | 69.20%               | 42.10%               | 60.24%                       |
-|                    | MiMo-VL-7B-RL       | **75.30%**           | 44.60%               | 67.56%                       |
-| **医学专用模型**   | MedVLM-R1-2B        | 22.00%               | 31.40%               | 64.31%                       |
-|                    | Med-R1-2B-Fundus    | 24.00%               | 26.10%               | 69.11%                       |
-|                    | MedGemma-4B-IT      | 39.20%               | 40.20%               | 62.85%                       |
-|                    | HuatuoGPT-V-7B      | 59.50%               | 51.90%               | 73.66%                       |
-| **我们的模型**     | **Ours-2B-Preview** | 67.60%               | **59.50%**           | **76.34%**                   |
-
-### 关键性能指标分析
-
-#### 1. 综合性能表现
-
-- **OmniMedVQA-Eye 得分 76.34%**：在所有参与对比的模型中排名第一，相比同规模模型有显著提升
-- **相比最接近的竞争对手 HuatuoGPT-V-7B(73.66%)**：尽管参数量仅为其 1/3，但性能提升了 2.68 个百分点
-
-#### 2. 参数效率优势
-
-- **2B 参数量**：在保持轻量化的同时实现最优性能
-- **与 InternVL3-2B 对比**：同为 2B 参数量，我们的模型在 OmniMedVQA-Eye 上的表现超出 12.27 个百分点(76.34% vs 64.07%)
-- **与 Qwen2.5VL-3B 对比**：用更少的参数量(2B vs 3B)实现了 20.08 个百分点的性能提升(76.34% vs 56.26%)
-
-#### 3. 专业化优势
-
-- **域内外均衡表现**：域内准确率 67.60%，域外准确率 76.34%，显示出良好的泛化能力
-- **医学专业性**：相比通用多模态模型，在医学专业任务上表现更加优异
-- **眼科专门优化**：针对眼科影像特点进行专门训练，在眼科相关任务上表现突出
-
-#### 4. 实用性分析
-
-- **部署友好**：2B 参数量使得模型可以在相对较低的硬件配置上部署
-- **推理速度**：轻量化设计保证了快速的推理响应时间
-- **成本效益**：在达到最佳性能的同时，大幅降低了计算资源需求
-
-## 🎯 五大 AI 智能体功能
-
-> 所有智能体均基于 **ReAct (Reasoning + Acting) 架构**设计，每次响应包含 `<think>` (推理过程) 和 `<answer>` (行动结果) 两个部分，确保诊疗决策的可解释性和可追溯性。
-
-### 1. 💬 智能问答 (Interactive VQA)
-
-- **功能描述**：支持上传眼科影像进行自由问答交互
-- **ReAct 实现**：
-  - *Reasoning*：分析影像特征，理解医生问题意图，调用医学知识库
-  - *Acting*：生成精准的专业解答，支持多轮追问和深度交互
-- **应用场景**：医生可以针对影像提出任意问题，获得专业解答
-
-### 2. 🎯 病灶定位 (Lesion Localization)
-
-- **功能描述**：自动识别并标注眼科影像中的病灶区域
-- **ReAct 实现**：
-  - *Reasoning*：逐步扫描影像区域，识别异常特征，评估病灶类型和严重程度
-  - *Acting*：输出标准化 JSON 格式的边界框坐标、病灶类型和置信度评分
-- **应用场景**：快速筛查可疑病灶，辅助医生聚焦重点区域
-
-### 3. 🩺 辅助诊断 (Diagnostic Assistant)
-
-- **功能描述**：提供多种可能的疾病诊断建议
-- **ReAct 实现**：
-  - *Reasoning*：分析影像表现，结合临床知识库，推理可能的疾病类型和鉴别诊断
-  - *Acting*：输出结构化的诊断建议列表，包含疾病名称、置信度、诊断依据和建议检查
-- **应用场景**：为医生提供诊断参考，提高诊断准确性和效率
-
-### 4. 📄 报告生成 (Report Generation)
-
-- **功能描述**：自动生成结构化的眼科影像诊断报告
-- **ReAct 实现**：
-  - *Reasoning*：综合分析影像所见，组织诊断逻辑，规划报告结构
-  - *Acting*：按照医疗规范生成包含"影像所见"、"诊断意见"、"建议"等标准章节的完整报告
-- **应用场景**：减少医生撰写报告的工作量，提高工作效率
-
-### 5. 🧠 眼科知识库 (Knowledge Base)
-
-- **功能描述**：专业眼科医学知识问答系统
-- **ReAct 实现**：
-  - *Reasoning*：检索相关医学文献和指南，评估信息可靠性，组织知识要点
-  - *Acting*：提供结构化的知识解答，引用权威来源，确保医学准确性
-- **应用场景**：医学知识查询、学习辅助、临床指导
-
-## 🚀 技术架构
-
-### 后端技术栈
-
-- **FastAPI**：高性能异步 Web 框架，支持自动 API 文档生成
-- **SQLModel**：统一数据验证与数据库模型管理
-- **SQLite**：轻量级数据库，支持快速部署
-- **WebSocket**：实时通信，支持流式 AI 响应
-- **OpenAI API**：标准化的 AI 模型调用接口
-
-### 前端技术栈
-
-- **原生 JavaScript ES6+**：无框架依赖，确保系统稳定性
-- **响应式设计**：适配桌面和移动设备
-- **WebSocket 客户端**：实时 AI 响应展示
-- **模块化架构**：每个智能体独立的 UI 组件
-
-### AI 模型集成 (基于 ReAct 架构)
-
-- **模型服务**：基于 OpenAI API 标准的模型服务接口，驱动 OphVLM-R1 推理引擎
-- **图像处理**：支持多种医学影像格式的预处理和 base64 编码
-- **ReAct 流式输出**：实时展示 `<think>` 推理过程和 `<answer>` 行动结果，提升用户体验
-- **智能体调度**：统一的 ReAct 框架管理五大智能体的推理-行动循环
-- **提示工程**：每个智能体配备专门优化的 system prompt，指导 ReAct 流程执行
-
-## 📦 快速开始
-
-### 环境要求
-
+### Environment Requirements
 - Python 3.8+
-- 8GB+ RAM（推荐）
-- GPU 支持（可选，用于本地模型部署）
+- 8GB+ RAM (Recommended)
+- GPU Support (Optional, for local model deployment)
 
-### 安装步骤
+### Installation Steps
 
-1. **克隆项目**
-
+1. **Clone the Project**
    ```bash
-   git clone [项目地址]
-   cd 慧眼·灵析项目代码
+   git clone [Project URL]
+   cd OphAgent
    ```
 
-2. **安装依赖**
-
+2. **Install Dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **配置环境变量**
-
+3. **Configure Environment Variables**
    ```bash
    cp .env.example .env
-   # 编辑.env文件，配置模型服务信息
+   # Edit .env file to configure model service information
    ```
 
-4. **初始化数据库**
-
+4. **Initialize Database**
    ```bash
    python init_db.py
    ```
 
-5. **启动系统**
-
+5. **Start the System**
    ```bash
    python run.py
    ```
 
-6. **访问系统**
-   - 浏览器访问：http://localhost:8012
-   - 注册账号并开始使用
+6. **Access the System**
+   - Open browser: http://localhost:8012
+   - Register an account and start using
 
-### 配置说明
+## 3. System Architecture
 
-关键配置项（在.env 文件中）：
+The "LingTong" system is built on the ReAct architecture, implementing a closed loop of "Reasoning-Acting," making the AI decision-making process interpretable and traceable.
 
-```env
-# 模型服务配置
-OPENAI_API_BASE=your-api-base-url
-OPENAI_API_KEY=your-api-key
-MODEL_NAME=your-model-name
-
-# 系统配置
-TEMPERATURE=0.7
-JWT_SECRET_KEY=your-secret-key
-```
-
-## 🏗️ 系统架构
+- **Backend**: Built on the FastAPI framework, supporting asynchronous high-concurrency processing and automatic API documentation generation; uses SQLModel for unified data validation and database model management, selecting SQLite as a lightweight database.
+- **Frontend**: Developed with native JavaScript ES6+, ensuring system stability without framework dependencies, with a responsive design adapting to desktop and mobile devices.
+- **Communication**: Integrates WebSocket for real-time communication, supporting streaming output of AI responses.
+- **Agents**: All five agents follow the ReAct working mode, receiving instructions and first entering the Reasoning phase, then the Acting phase.
 
 ```
-慧眼·灵析系统/
+OphAgent/
 ├── app/
-│   ├── main.py              # FastAPI主应用
-│   ├── core/config.py       # 配置管理
-│   ├── db/                  # 数据库层
-│   │   ├── models.py        # 数据模型
-│   │   ├── crud.py          # 数据操作
-│   │   └── database.py      # 数据库连接
-│   ├── auth/                # 认证模块
-│   │   ├── router.py        # 认证路由
-│   │   ├── security.py      # 安全组件
-│   │   └── schemas.py       # 认证模型
-│   ├── agents/              # AI智能体
-│   │   ├── interactive_vqa.py      # 智能问答
-│   │   ├── lesion_localizer.py     # 病灶定位
-│   │   ├── aux_diagnosis.py        # 辅助诊断
-│   │   ├── report_generator.py     # 报告生成
-│   │   └── knowledge_base.py       # 知识库
-│   ├── api/                 # API路由
-│   ├── services/            # 业务服务
-│   │   ├── model_service.py        # 模型服务
-│   │   ├── chat_service.py         # 聊天服务
-│   │   └── file_service.py         # 文件服务
-│   ├── static/              # 前端资源
-│   │   ├── js/              # JavaScript文件
-│   │   ├── css/             # 样式文件
-│   │   └── icons/           # 图标资源
-│   └── templates/           # HTML模板
-├── .github/
-│   └── copilot-instructions.md     # AI开发指南
-├── requirements.txt         # Python依赖
-├── run.py                  # 启动脚本
-└── README.md               # 项目文档
+│   ├── main.py              # FastAPI Main App
+│   ├── agents/              # AI Agents (ReAct Architecture)
+│   ├── api/                 # API Routes
+│   ├── services/            # Business Services
+│   └── static/              # Frontend Resources
+├── figures/                 # Project Demo Images
+├── requirements.txt         # Python Dependencies
+└── run.py                   # Startup Script
 ```
 
-## 🔧 开发指南
+## 4. Core Highlights
 
-### 添加新智能体
+- **🧠 OphVLM-R1 Model Driven**: Adopts a lightweight design (2B parameters), possessing deep ophthalmic professional reasoning capabilities despite its small size, supporting the analysis of various ophthalmic image types such as fundus photos, OCT, and anterior segment photos.
+- **🔄 ReAct Architecture Design**: The decision-making process of each agent is divided into Reasoning and Acting phases, allowing doctors to clearly understand the AI's reasoning path, breaking the limitation of traditional AI models' "black box operations."
+- **🎯 Five Professional Agents**: Covers the full process of diagnosis needs from image analysis and disease diagnosis to report writing and knowledge inquiry.
+- **💡 Modularity & Interpretability**: The modular design aligns with doctors' clinical thinking patterns, lowering the barrier to using the AI system and achieving interpretability and traceability of diagnostic decisions.
 
-1. **创建智能体模块**
+## 5. Technical Details
 
-   ```python
-   # app/agents/new_agent.py
-   def get_welcome_message():
-       return "新智能体的欢迎语"
+### 5.1 Dataset Construction: Closed Loop for High-Quality Reasoning Data Generation
 
-   def get_system_prompt():
-       return "系统提示语..."
+To solve the problems of strong heterogeneity in ophthalmic multimodal data and the lack of reasoning logic, we designed a three-stage closed-loop pipeline of "Data Standardization - Structured Reasoning Synthesis - Expert Collaborative Optimization."
 
-   def process_request(messages, uploaded_file_path):
-       # 处理逻辑
-       return {"type": "success", "payload": {...}}
-   ```
+![Data Training Pipeline](figures/data_training_pipeline.png)
 
-2. **注册智能体**
+1.  **Data Standardization**: Integrated over 100,000 real clinical cases and 30+ public ophthalmic datasets. Used MinerU to parse electronic medical records and InternVL3-78B to generate visual descriptions.
+2.  **Structured Reasoning Synthesis**: Introduced Intern-S1 as the core reasoning engine to generate multi-dimensional instruction data covering "Lesion Localization," "Multimodal Diagnosis," and "Medical Knowledge Q&A," along with Chain of Thought (CoT). Introduced "LVLM-as-a-Judge" mechanism for quality verification.
+3.  **Expert Collaborative Optimization**: Ophthalmologists conduct secondary reviews and corrections on difficult samples, building a difficulty-aware dynamic data pool.
 
-   ```python
-   # app/api/router.py
-   agent_processors = {
-       "new_agent": new_agent.process_request,
-       # ...其他智能体
-   }
-   ```
+### 5.2 Model Training: Two-Stage Progressive Reinforcement Learning Architecture
 
-3. **创建前端 UI**
-   ```javascript
-   // app/static/js/agents/new_agent.js
-   class NewAgentUI {
-     renderSpecialOutput(messageElement, data) {
-       // UI渲染逻辑
-     }
-   }
-   ```
+We use InternVL3-2B as the base model and adopt a two-stage architecture of "Cold-Start Supervised Fine-Tuning + Progressive Curriculum Reinforcement Learning."
 
-### 自定义配置
+![Two-Stage Training](figures/two_stage_training.png)
 
-编辑配置文件以适应不同部署环境：
+1.  **Cold-Start Supervised Fine-Tuning (SFT)**: Uses LoRA technology to inject ophthalmic domain knowledge.
+2.  **Progressive Curriculum Reinforcement Learning (RL)**: Introduces the DAPO algorithm and stimulates deep reasoning capabilities through a four-stage curriculum from easy to difficult (Lesion Localization -> Multi-Image Selection -> Open-Ended VQA -> Ophthalmic Knowledge Q&A).
 
-```python
-# app/core/config.py
-class Settings(BaseSettings):
-    OPENAI_API_BASE: str = "http://your-model-service/v1"
-    MODEL_NAME: str = "your-model-name"
-    # 其他配置...
-```
+## 6. Model Performance
 
-## 🛠️ API 文档
+Based on the latest performance evaluation results, the "LingTong" Ophthalmic Multimodal Reasoning Large Model (OphVLM-R1 / Ours-2B-Preview) has demonstrated excellent performance on the OmniMedVQA-Eye ophthalmic medical Q&A dataset.
 
-启动系统后可访问自动生成的 API 文档：
+![Model Performance Results](figures/model_performance.svg)
 
-- **Swagger UI**: http://localhost:8012/docs
-- **ReDoc**: http://localhost:8012/redoc
+- **Comprehensive Performance**: OmniMedVQA-Eye score of **76.34%**, ranking first among all compared models.
+- **Parameter Efficiency**: Outperforms larger parameter models (such as HuatuoGPT-V-7B) with only 2B parameters.
+- **Professional Advantage**: In-domain accuracy of 67.60% and out-of-domain accuracy of 76.34%, showing good generalization ability and medical professionalism.
 
-### 主要 API 端点
+## 7. Dataset Examples
 
-#### 认证相关
+The project constructed the high-quality ophthalmic multimodal reasoning dataset **OphReason-Vision**, providing solid support for model training.
 
-- POST /register - 用户注册
-- POST /login - 用户登录
-- GET /me - 获取用户信息
+![Dataset Example](figures/dataset_example.png)
 
-#### 对话管理
+This dataset achieves deep alignment of ophthalmic multimodal data and standardized generation of structured reasoning chains for the first time.
 
-- GET /api/v1/conversations - 获取对话列表
-- POST /api/v1/conversations - 创建新对话
-- POST /api/v1/conversations/{id}/messages - 发送消息
-- WebSocket /api/v1/ws/{conversation_id} - 实时通信
+## 8. Project Effect Demo
 
-#### 文件处理
+The system integrates five major agents. Here are the actual operating effects of each agent:
 
-- POST /api/v1/upload - 文件上传
+### 8.1 Interactive VQA
+Supports uploading ophthalmic images for free Q&A interaction and multi-turn follow-up questions.
+![Interactive VQA Demo](figures/demo_interactive_vqa.png)
 
-## 🔍 故障排除
+### 8.2 Lesion Localization
+Automatically identifies and annotates lesion areas in ophthalmic images, outputting standardized bounding boxes.
+![Lesion Localization Demo](figures/demo_lesion_localization.png)
 
-### 常见问题
+### 8.3 Diagnostic Assistant
+Provides multiple possible disease diagnosis suggestions, including confidence levels and diagnostic basis.
+![Diagnostic Assistant Demo](figures/demo_aux_diagnosis.png)
 
-1. **模型服务连接失败**
+### 8.4 Report Generation
+Automatically generates structured ophthalmic image diagnostic reports, including imaging findings and diagnostic opinions.
+![Report Generation Demo](figures/demo_report_generation.png)
 
-   - 检查 OPENAI_API_BASE 配置是否正确
-   - 确认模型服务是否正常运行
-   - 验证 API 密钥的有效性
+### 8.5 Knowledge Base
+Professional ophthalmic medical knowledge Q&A system, citing authoritative sources.
+![Knowledge Base Demo](figures/demo_knowledge_base.png)
 
-2. **文件上传问题**
+## 9. Development Guide
 
-   - 检查 app/static/uploads/目录权限
-   - 确认文件格式是否支持
-   - 检查文件大小限制
+### Adding a New Agent
+1. **Create Agent Module** (`app/agents/new_agent.py`)
+2. **Register Agent** (`app/api/router.py`)
+3. **Create Frontend UI** (`app/static/js/agents/new_agent.js`)
 
-3. **数据库问题**
-   - 运行 python init_db.py 重新初始化
-   - 检查数据库文件权限
+### Custom Configuration
+Edit `app/core/config.py` to adapt to different deployment environments.
 
-### 调试技巧
+## 10. FAQ
 
-- 查看控制台日志中的[DEBUG]标记
-- 使用浏览器开发者工具检查网络请求
-- 检查 WebSocket 连接状态
+1. **Model Service Connection Failure**
+   - Check `OPENAI_API_BASE` configuration in `.env`.
+   - Confirm if the model service is running normally.
 
-## 🤝 贡献指南
+2. **File Upload Issues**
+   - Check permissions for `app/static/uploads/` directory.
 
-1. Fork 项目仓库
-2. 创建功能分支 (git checkout -b feature/NewFeature)
-3. 提交更改 (git commit -m 'Add NewFeature')
-4. 推送到分支 (git push origin feature/NewFeature)
-5. 创建 Pull Request
+3. **Database Issues**
+   - Run `python init_db.py` to re-initialize.
 
-## 📄 许可证
+## 11. Acknowledgements
 
-本项目采用 MIT 许可证
+The successful progress of this project relies on the key support from the InternLM Practical Camp, the InternLM Ecosystem, and the Datawhale Open Source Community. We sincerely thank these open-source communities for providing a solid foundation for this project and jointly promoting the development of the ophthalmic AI field.
 
-## 🙏 致谢
+## 12. Related Links
 
-- 书生Intern的开源模型支持：https://github.com/OpenGVLab/InternVL
-- Datawhale开源社区的技术支持: https://www.datawhale.cn/
-
----
-
-**"灵瞳"眼科智慧诊疗系统** - 让 AI 成为眼科医生的智能助手，提升诊疗效率与精度。
-
-本项目欢迎各界贡献与合作，共同推动医疗 AI 技术的发展！
-
-
-
-
-
-
-
-
-
-
+- **System Demo Video**: [Bilibili](https://www.bilibili.com/video/BV1g4UTBZEEm/) https://www.bilibili.com/video/BV1g4UTBZEEm/
+- **Open Source Code**: [GitHub](https://github.com/QiZishi/OphAgent/) https://github.com/QiZishi/OphAgent/
+- **OphReason-Vision Dataset**: [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision) https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
+- **InternVL Open Source**: [GitHub](https://github.com/OpenGVLab/InternVL) https://github.com/OpenGVLab/InternVL
+- **InternLM Online Experience**: [InternAI](https://chat.intern-ai.org.cn/) https://chat.intern-ai.org.cn/
+- **InternLM Practical Camp**: [InternLM Practical Camp](https://colearn.intern-ai.org.cn/go) https://colearn.intern-ai.org.cn/go
+- **Datawhale Open Source Community**: [Datawhale](https://www.datawhale.cn/) https://www.datawhale.cn/
