@@ -2,6 +2,17 @@
 
 [English](README.md) | [简体中文](README_zh.md)
 
+## 📰 News
+
+- **2025.12.09** 🎉 **Exciting News!** The "LingTong" Ophthalmic Intelligent Diagnosis System has been featured and promoted by Shanghai AI Laboratory, and awarded the **Outstanding Project of InternLM Practical Camp**! We sincerely thank Shanghai AI Laboratory and InternLM Practical Camp for their recognition and support!
+  - 📖 Featured Article: https://mp.weixin.qq.com/s/BTZPUrVtD8nCS_yMwDhhUQ
+
+- **2025.11.28** 📊 The high-quality ophthalmic multimodal reasoning dataset **OphReason-Vision** subset has been officially open-sourced on the ModelScope platform!
+  - 🔗 Dataset Link: https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
+
+- **2025.11.23** 🎬 The "LingTong" Ophthalmic Intelligent Diagnosis System demo video has been officially released on Bilibili, showcasing the full-process diagnostic capabilities of all five intelligent agents!
+  - 🎥 Video Link: https://www.bilibili.com/video/BV1g4UTBZEEm/
+
 ## 1. Project Introduction
 
 **"LingTong" Ophthalmic Intelligent Diagnosis System** is a specialized medical AI platform built upon the self-developed **OphVLM-R1 Ophthalmic Multimodal Reasoning Large Model**. Developed by the AI Safety Laboratory team at the School of Artificial Intelligence and Automation, Huazhong University of Science and Technology, this project aims to address the global disparity in high-quality ophthalmic medical resources and the high rates of misdiagnosis and missed diagnosis in primary medical institutions.
