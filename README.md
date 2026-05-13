@@ -111,17 +111,7 @@ We use InternVL3-2B as the base model and adopt a two-stage architecture of "Col
 1.  **Cold-Start Supervised Fine-Tuning (SFT)**: Uses LoRA technology to inject ophthalmic domain knowledge.
 2.  **Progressive Curriculum Reinforcement Learning (RL)**: Introduces the DAPO algorithm and stimulates deep reasoning capabilities through a four-stage curriculum from easy to difficult (Lesion Localization -> Multi-Image Selection -> Open-Ended VQA -> Ophthalmic Knowledge Q&A).
 
-## 6. Model Performance
-
-Based on the latest performance evaluation results, the "LingTong" Ophthalmic Multimodal Reasoning Large Model (OphVLM-R1 / Ours-2B-Preview) has demonstrated excellent performance on the OmniMedVQA-Eye ophthalmic medical Q&A dataset.
-
-![Model Performance Results](figures/model_performance.svg)
-
-- **Comprehensive Performance**: OmniMedVQA-Eye score of **76.34%**, ranking first among all compared models.
-- **Parameter Efficiency**: Outperforms larger parameter models (such as HuatuoGPT-V-7B) with only 2B parameters.
-- **Professional Advantage**: In-domain accuracy of 67.60% and out-of-domain accuracy of 76.34%, showing good generalization ability and medical professionalism.
-
-## 7. Dataset Examples
+## 6. Dataset Examples
 
 The project constructed the high-quality ophthalmic multimodal reasoning dataset **OphReason-Vision**, providing solid support for model training.
 
@@ -129,31 +119,31 @@ The project constructed the high-quality ophthalmic multimodal reasoning dataset
 
 This dataset achieves deep alignment of ophthalmic multimodal data and standardized generation of structured reasoning chains for the first time.
 
-## 8. Project Effect Demo
+## 7. Project Effect Demo
 
 The system integrates five major agents. Here are the actual operating effects of each agent:
 
-### 8.1 Interactive VQA
+### 7.1 Interactive VQA
 Supports uploading ophthalmic images for free Q&A interaction and multi-turn follow-up questions.
 ![Interactive VQA Demo](figures/demo_interactive_vqa.png)
 
-### 8.2 Lesion Localization
+### 7.2 Lesion Localization
 Automatically identifies and annotates lesion areas in ophthalmic images, outputting standardized bounding boxes.
 ![Lesion Localization Demo](figures/demo_lesion_localization.png)
 
-### 8.3 Diagnostic Assistant
+### 7.3 Diagnostic Assistant
 Provides multiple possible disease diagnosis suggestions, including confidence levels and diagnostic basis.
 ![Diagnostic Assistant Demo](figures/demo_aux_diagnosis.png)
 
-### 8.4 Report Generation
+### 7.4 Report Generation
 Automatically generates structured ophthalmic image diagnostic reports, including imaging findings and diagnostic opinions.
 ![Report Generation Demo](figures/demo_report_generation.png)
 
-### 8.5 Knowledge Base
+### 7.5 Knowledge Base
 Professional ophthalmic medical knowledge Q&A system, citing authoritative sources.
 ![Knowledge Base Demo](figures/demo_knowledge_base.png)
 
-## 9. Development Guide
+## 8. Development Guide
 
 ### Adding a New Agent
 1. **Create Agent Module** (`app/agents/new_agent.py`)
@@ -163,7 +153,7 @@ Professional ophthalmic medical knowledge Q&A system, citing authoritative sourc
 ### Custom Configuration
 Edit `app/core/config.py` to adapt to different deployment environments.
 
-## 10. FAQ
+## 9. FAQ
 
 1. **Model Service Connection Failure**
    - Check `OPENAI_API_BASE` configuration in `.env`.
@@ -175,7 +165,7 @@ Edit `app/core/config.py` to adapt to different deployment environments.
 3. **Database Issues**
    - Run `python init_db.py` to re-initialize.
 
-## 11. Open Source Status
+## 10. Open Source Status
 
 ### ✅ Open Sourced
 - **System Architecture Code**: Complete frontend/backend code, API interfaces, database models
@@ -190,11 +180,11 @@ Edit `app/core/config.py` to adapt to different deployment environments.
 
 > **Note**: Full datasets, model weights, and training code will be released in batches after completing medical data privacy and ethical reviews.
 
-## 12. Acknowledgements
+## 11. Acknowledgements
 
 The successful progress of this project relies on the key support from the InternLM Practical Camp, the InternLM Ecosystem, and the Datawhale Open Source Community. We sincerely thank these open-source communities for providing a solid foundation for this project and jointly promoting the development of the ophthalmic AI field.
 
-## 13. Related Links
+## 12. Related Links
 
 - **System Demo Video**: https://www.bilibili.com/video/BV1g4UTBZEEm/
 - **Open Source Code**: https://github.com/QiZishi/OphAgent/
