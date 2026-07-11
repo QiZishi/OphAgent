@@ -5,7 +5,7 @@
 ## 🔗 开源链接
 
 - **OphAgent 系统代码**: [GitHub](https://github.com/QiZishi/OphAgent/)
-- **OphVLM-R1 模型权重**: [ModelScope](https://www.modelscope.cn/models/QiZishi/OphVLM-R1)
+- **OphVLM-R1 模型权重**: [ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1)
 - **OphReason-Vision 数据集**: [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision)
 - **论文**: [WAICA 2026](https://waica2026.worldaic.com.cn/)
 
@@ -246,7 +246,7 @@ OphVLM-R1 基于 InternVL3.5-2B 架构，采用两阶段训练：第一阶段通
 ## 14. 相关链接
 
 - **项目开源代码**：https://github.com/QiZishi/OphAgent/
-- **OphVLM-R1 模型**：[ModelScope](https://www.modelscope.cn/models/QiZishi/OphVLM-R1)
+- **OphVLM-R1 模型**：[ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1)
 - **OphReason-Vision数据集**：https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
 - **论文**：https://waica2026.worldaic.com.cn/
 - **InternVL 开源链接**：https://github.com/OpenGVLab/InternVL
