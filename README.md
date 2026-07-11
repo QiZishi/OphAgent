@@ -5,8 +5,8 @@
 ## 🔗 Open Source Links
 
 - **OphAgent System Code**: [GitHub](https://github.com/QiZishi/OphAgent/)
-- **OphVLM-R1 Model Weights**: [ModelScope](https://www.modelscope.cn/models/QiZishi/OphVLM-R1)
-- **OphReason-Vision Dataset**: [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision)
+- **OphVLM-R1 Model Weights**: [ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1) | [HuggingFace](https://huggingface.co/QiZishi/OphVLM-R1)
+- **OphReason-Vision Dataset**: [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision) | [HuggingFace](https://huggingface.co/datasets/QiZishi/OphReason-Vision)
 - **Paper**: [WAICA 2026](https://waica2026.worldaic.com.cn/)
 
 ## 📰 News
@@ -222,7 +222,7 @@ If you use OphVLM-R1, OphReason-Vision, or OphAgent in your research, please cit
 @inproceedings{qi2026ophvlmr1,
   title={OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum RL},
   author={Qi, Zishi and Hu, Xiaoya and Pan, Huilin and Gao, Ang and Hou, Jiaxin and Li, Jiankun and Qian, Yongao},
-  booktitle={Proceedings of the World Artificial Intelligence Conference (WAICA)},
+  booktitle={Proceedings of the World Artificial Intelligence Conference Academic (WAICA)},
   year={2026}
 }
 ```
@@ -230,8 +230,8 @@ If you use OphVLM-R1, OphReason-Vision, or OphAgent in your research, please cit
 ## 13. Related Links
 
 - **Open Source Code**: https://github.com/QiZishi/OphAgent/
-- **OphVLM-R1 Model**: [ModelScope](https://www.modelscope.cn/models/QiZishi/OphVLM-R1)
-- **OphReason-Vision Dataset**: https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
+- **OphVLM-R1 Model**: [ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1) | [HuggingFace](https://huggingface.co/QiZishi/OphVLM-R1)
+- **OphReason-Vision Dataset**: [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision) | [HuggingFace](https://huggingface.co/datasets/QiZishi/OphReason-Vision)
 - **Paper**: https://waica2026.worldaic.com.cn/
 - **InternVL Open Source**: https://github.com/OpenGVLab/InternVL
 - **InternLM Online Experience**: https://chat.intern-ai.org.cn/
