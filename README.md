@@ -1,239 +1,279 @@
-# <img src="figures/system_logo.png" width="40" /> "LingTong" Ophthalmic Intelligent Diagnosis System
+<p align="center">
+  <img src="figures/模型图标.png" width="120" alt="OphVLM-R1 project icon">
+</p>
 
-[English](README.md) | [简体中文](README_zh.md)
+<h1 align="center">OphAgent · “LingTong” Ophthalmic Intelligent Diagnosis System</h1>
 
-## 🔗 Open Source Links
+<p align="center"><strong>A ReAct-based ophthalmic multimodal reasoning and clinical assistance platform</strong></p>
 
-- **OphAgent System Code**: [GitHub](https://github.com/QiZishi/OphAgent/)
-- **OphVLM-R1 Model Weights**: [ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1) | [HuggingFace](https://huggingface.co/QiZishi/OphVLM-R1)
-- **OphReason-Vision Dataset**: [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision) | [HuggingFace](https://huggingface.co/datasets/QiZishi/OphReason-Vision)
-- **Paper**: [WAICA 2026](https://waica2026.worldaic.com.cn/)
+<p align="center">
+  <a href="README.md">English</a> · <a href="README_zh.md">简体中文</a>
+</p>
 
-## 📰 News
+<p align="center">
+  <a href="https://qizishi.github.io/OphVLM-R1/"><img src="https://img.shields.io/badge/Project-Page-2b6cb0?style=for-the-badge" alt="Project page"></a>
+  <a href="https://github.com/QiZishi/OphAgent/"><img src="https://img.shields.io/badge/Code-OphAgent-181717?style=for-the-badge&logo=github" alt="OphAgent code"></a>
+</p>
+<p align="center">
+  <a href="https://huggingface.co/QiZishi/OphVLM-R1"><img src="https://img.shields.io/badge/🤗%20Model-Hugging%20Face-FFD21E?style=for-the-badge" alt="Model on Hugging Face"></a>
+  <a href="https://www.modelscope.cn/models/MoonNight/OphVLM-R1"><img src="https://img.shields.io/badge/Model-ModelScope-624AFF?style=for-the-badge" alt="Model on ModelScope"></a>
+</p>
+<p align="center">
+  <a href="https://huggingface.co/datasets/QiZishi/OphReason-Vision"><img src="https://img.shields.io/badge/🤗%20Dataset-Hugging%20Face-FFD21E?style=for-the-badge" alt="Dataset on Hugging Face"></a>
+  <a href="https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision"><img src="https://img.shields.io/badge/Dataset-ModelScope-624AFF?style=for-the-badge" alt="Dataset on ModelScope"></a>
+</p>
 
-- **2026.07.07** 🎉 Paper "OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum RL" accepted by **WAICA 2026**!
-  - 📖 Conference: https://waica2026.worldaic.com.cn/
+## Project Links
 
-- **2025.12.09** 🎉 **Exciting News!** The "LingTong" Ophthalmic Intelligent Diagnosis System has been featured and promoted by Shanghai AI Laboratory, and awarded the **Outstanding Project of InternLM Practical Camp**!
-  - 📖 Featured Article: https://mp.weixin.qq.com/s/BTZPUrVtD8nCS_yMwDhhUQ
+- **Project page**: <https://qizishi.github.io/OphVLM-R1/>
+- **OphAgent system code**: [GitHub](https://github.com/QiZishi/OphAgent/)
+- **OphVLM-R1 model**: [Hugging Face](https://huggingface.co/QiZishi/OphVLM-R1) | [ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1)
+- **OphReason-Vision dataset**: [Hugging Face](https://huggingface.co/datasets/QiZishi/OphReason-Vision) | [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision)
+
+## News
+
+- **2026.07.07** 🎉 Paper “OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum Reinforcement Learning” accepted by **WAICA 2026**!
+  - 📖 Conference: <https://waica2026.worldaic.com.cn/>
+
+- **2025.12.09** 🎉 **Exciting News!** The “LingTong” Ophthalmic Intelligent Diagnosis System has been featured and promoted by Shanghai AI Laboratory and awarded the **Outstanding Project of InternLM Practical Camp**!
+  - 📖 Featured Article: <https://mp.weixin.qq.com/s/BTZPUrVtD8nCS_yMwDhhUQ>
 
 - **2025.11.28** 📊 The high-quality ophthalmic multimodal reasoning dataset **OphReason-Vision** subset has been officially open-sourced on the ModelScope platform!
-  - 🔗 Dataset Link: https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision
+  - 🔗 Dataset Link: <https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision>
 
-- **2025.11.23** 🎬 The "LingTong" Ophthalmic Intelligent Diagnosis System demo video has been officially released on Bilibili, showcasing the full-process diagnostic capabilities of all five intelligent agents!
-  - 🎥 Video Link: https://www.bilibili.com/video/BV1g4UTBZEEm/
+- **2025.11.23** 🎬 The “LingTong” Ophthalmic Intelligent Diagnosis System demo video has been officially released on Bilibili, showcasing the full-process diagnostic capabilities of all five intelligent agents!
+  - 🎥 Video Link: <https://www.bilibili.com/video/BV1g4UTBZEEm/>
 
-## 1. Project Introduction
+## Background
 
-**"LingTong" Ophthalmic Intelligent Diagnosis System** is a specialized medical AI platform built upon the self-developed **OphVLM-R1 Ophthalmic Multimodal Reasoning Large Model**. Developed by the AI Safety Laboratory team at the School of Artificial Intelligence and Automation, Huazhong University of Science and Technology, this project aims to address the global disparity in high-quality ophthalmic medical resources and the high rates of misdiagnosis and missed diagnosis in primary medical institutions.
+**“LingTong” Ophthalmic Intelligent Diagnosis System** is a specialized medical AI platform built upon the self-developed **OphVLM-R1 ophthalmic multimodal reasoning model**. Developed by the AI Safety Laboratory team at the School of Artificial Intelligence and Automation, Huazhong University of Science and Technology, the project aims to address the global disparity in high-quality ophthalmic medical resources and the high rates of misdiagnosis and missed diagnosis in primary medical institutions.
 
-Ophthalmic multimodal large language models face three challenges: training data lacking structured reasoning chains, single-stage training that fails to cultivate deep clinical reasoning, and large model sizes that limit deployment in resource-constrained settings. OphVLM-R1 addresses all three through a complete data-model-optimization pipeline centered on curriculum reinforcement learning.
+Ophthalmic multimodal large language models face three challenges: training data lacking structured reasoning chains, single-stage training that fails to cultivate deep clinical reasoning, and large model sizes that limit deployment in resource-constrained settings. The project addresses these challenges through an integrated data–model–agent stack. OphReason-Vision converts heterogeneous ophthalmic data into expert-verified reasoning trajectories; OphVLM-R1 develops clinical reasoning through a LoRA cold start followed by curriculum reinforcement learning; and OphAgent exposes the resulting capabilities through a modular clinical-assistance system.
 
-Based on the InternLM ecosystem (InternVL3, Intern-S1), the system adopts the **ReAct (Reasoning + Acting) agent architecture** and integrates five professional AI agents: Interactive VQA, Lesion Localization, Diagnostic Assistant, Report Generation, and Ophthalmic Knowledge Base. Through innovative dataset construction methods, a two-stage training architecture, and the ReAct agent system, it achieves a leap in ophthalmic intelligent diagnosis from "perceptual recognition" to "cognitive reasoning," providing clinical practitioners with an efficient, transparent, and trustworthy auxiliary diagnosis solution.
+Based on the InternLM ecosystem, including InternVL3.5 and Intern-S1, the system adopts a **ReAct (Reasoning + Acting) agent architecture** and integrates five professional AI agents: Interactive VQA, Lesion Localization, Diagnostic Assistant, Report Generation, and Ophthalmic Knowledge Base. Through the dataset construction pipeline, two-stage model training, and the ReAct agent system, LingTong advances ophthalmic intelligent diagnosis from “perceptual recognition” toward “cognitive reasoning” while keeping intermediate actions inspectable and traceable.
 
-**Core Objective**: To empower clinicians, especially primary healthcare workers, with AI technology to enhance early screening and precise diagnosis capabilities for ophthalmic diseases.
+**Core objective:** empower clinicians, especially primary healthcare workers, with AI-assisted early screening and precise diagnosis capabilities for ophthalmic diseases. LingTong is a research and clinical-assistance system and is not a substitute for professional medical judgment.
 
-## 2. Quick Start
+## OphReason-Vision Dataset Pipeline
+
+The three-stage closed loop transforms 100K+ raw clinical cases and 30+ public datasets into 15,418 reasoning trajectories.
+
+![OphReason-Vision data pipeline](figures/data_pipeline.png)
+
+### 1. Data Standardization
+
+This stage integrates 100K+ clinical cases with 30+ public datasets through a dual-stream strategy. The **text stream** parses unstructured electronic medical records into standardized JSON and resolves inconsistent terminology through a curated ophthalmic synonym table. The **visual stream** generates detailed textual descriptions for datasets that contain only image-level labels, enriching the visual evidence available for subsequent reasoning synthesis.
+
+### 2. Structured Reasoning Synthesis
+
+Intern-S1 generates multidimensional instructions covering lesion localization, multimodal diagnosis, and knowledge question answering. For each instruction, it produces a Chain-of-Thought trajectory that follows the clinical diagnostic workflow:
+
+> visual sign identification → knowledge retrieval → pathological analysis → clinical decision
+
+An LVLM-as-a-Judge filter uses Intern-S1 with threshold $\tau=0.7$, determined on 500 expert-reviewed pilot samples to maximize F1. It evaluates medical correctness, reasoning consistency, step completeness, and clarity, while flagging hallucinated findings, incorrect disease classification, and logically inconsistent steps.
+
+### 3. Expert-Collaborative Optimization
+
+Three board-certified ophthalmologists review the 18% of samples flagged as difficult. Inter-rater agreement reaches Cohen's $\kappa=0.82$, and disagreements are discussed until consensus. Difficulty is graded from base-model perplexity so that the curriculum can progress from easier perception tasks to harder long-form reasoning tasks. Perceptual hashing, source-identifier cross-referencing, and manual source audits are used to reduce contamination with external benchmarks.
+
+| Split | Records | Purpose |
+|---|---:|---|
+| Cold-start SFT | 3,418 | Domain knowledge injection |
+| Four curriculum stages | 10,000 | Progressive reasoning training |
+| In-domain evaluation | 2,000 | Held-out clinical evaluation |
+| **Total** | **15,418** | **13,418 train + 2,000 eval** |
+
+## OphVLM-R1 Training Framework and Algorithms
+
+OphVLM-R1 is a 2B-parameter model based on InternVL3.5-2B. Its lightweight scale supports deployment on consumer-grade GPUs while retaining capacity for multimodal clinical reasoning. Training proceeds in two stages: parameter-efficient supervised fine-tuning injects ophthalmic knowledge, followed by curriculum reinforcement learning that progressively develops diagnostic reasoning.
+
+![OphVLM-R1 two-stage training framework](figures/two_stage_training.png)
+
+### Stage 1: LoRA Supervised Fine-Tuning
+
+The 3,418-sample cold-start subset injects broad ophthalmic domain knowledge with Low-Rank Adaptation (LoRA), constraining weight updates to low-rank decomposition. The adapters use rank $r=64$ and scaling $\alpha=128$ on the $W_q$, $W_k$, $W_v$, and $W_o$ attention projections. Training uses cosine annealing from a learning rate of $1\times10^{-4}$, batch size 32, and 3 epochs; approximately 0.5% of the total parameters are trainable.
+
+### Stage 2: Curriculum Reinforcement Learning
+
+Four tasks are ordered by increasing diagnostic complexity:
+
+1. Lesion Localization.
+2. Multi-image Selection.
+3. Report Generation.
+4. Knowledge Q&A.
+
+Group Sequence-level Policy Optimization (GSPO) addresses instability from token-level policy ratios in long reasoning chains by computing importance ratios at sequence level. Each curriculum stage optimizes a mixed reward combining rule-based verifiable reward and an Intern-S1-mini judge reward, with weights $\lambda_1=0.6$ and $\lambda_2=0.4$. Training uses $G=8$, $\varepsilon=0.2$, learning rate $5\times10^{-6}$, $\beta_{\mathrm{KL}}=0.04$, and 2 epochs per stage.
+
+### Hard-Sample Dynamic Backtracking
+
+An on-policy resampling mechanism tracks prompts whose rewards remain below a threshold over the most recent $k=5$ rounds and increases their sampling probability according to consecutive failure counts. It stores only prompt indices and failure statistics, ensuring fresh on-policy rollouts whenever a difficult prompt is revisited. Resampling is capped at 30% of each batch to retain coverage of already learned samples.
+
+## Model Performance
+
+Accuracy is reported in percent. The average is reference-only because the benchmarks use different formats, difficulties, and random baselines.
+
+| Model | In-Domain | Fundus | Omni-Eye | Avg.* |
+|---|---:|---:|---:|---:|
+| InternVL3.5-2B | 34.50 | 36.61 | 55.47 | 42.19 |
+| InternVL3.5-4B | 36.23 | 42.10 | 77.51 | 51.95 |
+| Lingshu-7B | **44.20** | 41.29 | 87.42 | **57.64** |
+| OphthaReason-Qwen-3B | 36.60 | 38.87 | 86.86 | 54.11 |
+| **OphVLM-R1-2B (ours)** | 38.40 | 42.58 | **88.24** | 56.41 |
+
+Within the reported comparisons, OphVLM-R1 achieves 88.24% on out-of-domain OmniMedVQA-Eye and 42.58% on Fundus-MMBench. Its 56.41% reference average exceeds InternVL3.5-4B at 51.95% and the domain-adapted OphthaReason-Qwen-3B at 54.11%. Ablations reduce Omni-Eye by 26.21 points with SFT only, 10.10 points with one-shot RL, 3.72 points when GSPO is replaced by token-level GRPO, and 2.12 points without hard-sample backtracking. Results are single runs without confidence intervals or significance tests, and comparisons with off-the-shelf 7B/8B models should be interpreted cautiously because training-data exposure and model scale are not controlled.
+
+## OphAgent Design Architecture
+
+The LingTong system is built on a ReAct architecture, implementing a closed loop of **Reasoning → Acting → Observation**. Each agent first analyzes the clinical request and available multimodal evidence, then selects and executes the appropriate action before incorporating the returned observation. This design keeps task decomposition, tool execution, and returned evidence inspectable and traceable.
+
+```text
+OphAgent/
+├── app/
+│   ├── main.py              # FastAPI application
+│   ├── agents/              # ReAct agents
+│   ├── api/                 # API routes
+│   ├── services/            # Business services
+│   └── static/              # Web interface
+├── figures/                 # Documentation assets
+├── requirements.txt
+└── run.py
+```
+
+- **Backend**: built with FastAPI for asynchronous processing and automatic API documentation; SQLModel unifies data validation and database models, while SQLite provides lightweight persistence.
+- **Frontend**: developed with native JavaScript ES6+ without a framework dependency, with responsive layouts for desktop and mobile devices.
+- **Communication**: WebSocket integration supports real-time communication and streaming model responses.
+- **Agent layer**: five modular agents follow the ReAct workflow and map directly to distinct clinical-assistance tasks.
+
+## Core Highlights
+
+- **🧠 OphVLM-R1 driven**: a lightweight 2B-parameter ophthalmic reasoning model supports fundus photographs, OCT, and anterior-segment images.
+- **🔄 ReAct architecture**: each agent separates reasoning from action, making intermediate decisions easier to inspect than a single opaque model response.
+- **🎯 Five professional agents**: the system covers image interaction, lesion analysis, candidate diagnosis, report writing, and knowledge inquiry.
+- **💡 Modularity and interpretability**: clinical capabilities are separated into focused components that can be configured, maintained, and extended independently.
+
+## Core Functions
+
+### Interactive VQA
+
+Supports uploading ophthalmic images for free-form question answering and multi-turn follow-ups, allowing users to refine questions as new findings emerge.
+
+![Interactive VQA demo](figures/demo_interactive_vqa.png)
+
+### Lesion Localization
+
+Automatically identifies and annotates suspected lesion regions in ophthalmic images and returns standardized bounding boxes for downstream inspection.
+
+![Lesion localization demo](figures/demo_lesion_localization.png)
+
+### Diagnostic Assistant
+
+Provides multiple candidate diagnoses with confidence information and supporting diagnostic evidence to assist clinical review.
+
+![Diagnostic assistant demo](figures/demo_aux_diagnosis.png)
+
+### Report Generation
+
+Automatically generates structured ophthalmic imaging reports containing imaging findings and diagnostic impressions.
+
+![Report generation demo](figures/demo_report_generation.png)
+
+### Ophthalmic Knowledge Base
+
+Provides professional ophthalmic medical knowledge question answering and returns supporting sources when the retrieval service is configured.
+
+![Knowledge base demo](figures/demo_knowledge_base.png)
+
+## Quick Start
 
 ### Environment Requirements
+
 - Python 3.8+
-- 8GB+ RAM (Recommended)
-- GPU Support (Optional, for local model deployment)
+- 8 GB+ RAM recommended
+- GPU support optional for local model deployment
 
-### Installation Steps
+### Installation
 
-1. **Clone the Project**
+1. Clone the repository:
+
    ```bash
    git clone https://github.com/QiZishi/OphAgent.git
    cd OphAgent
    ```
 
-2. **Install Dependencies**
+2. Install dependencies:
+
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Configure Environment Variables**
+3. Configure environment variables:
+
    ```bash
    cp .env.example .env
-   # Edit .env file to configure model service information
+   # Edit .env to configure the model service.
    ```
 
-4. **Initialize Database**
+4. Initialize the database and start the system:
+
    ```bash
    python init_db.py
-   ```
-
-5. **Start the System**
-   ```bash
    python run.py
    ```
 
-6. **Access the System**
-   - Open browser: http://localhost:8012
-   - Register an account and start using
+5. Open <http://localhost:8012>, register an account, and start using the system.
 
-## 3. System Architecture
-
-The "LingTong" system is built on the ReAct architecture, implementing a closed loop of "Reasoning-Acting," making the AI decision-making process interpretable and traceable.
-
-- **Backend**: Built on the FastAPI framework, supporting asynchronous high-concurrency processing and automatic API documentation generation; uses SQLModel for unified data validation and database model management, selecting SQLite as a lightweight database.
-- **Frontend**: Developed with native JavaScript ES6+, ensuring system stability without framework dependencies, with a responsive design adapting to desktop and mobile devices.
-- **Communication**: Integrates WebSocket for real-time communication, supporting streaming output of AI responses.
-- **Agents**: All five agents follow the ReAct working mode, receiving instructions and first entering the Reasoning phase, then the Acting phase.
-
-```
-OphAgent/
-├── app/
-│   ├── main.py              # FastAPI Main App
-│   ├── agents/              # AI Agents (ReAct Architecture)
-│   ├── api/                 # API Routes
-│   ├── services/            # Business Services
-│   └── static/              # Frontend Resources
-├── figures/                 # Project Demo Images
-├── requirements.txt         # Python Dependencies
-└── run.py                   # Startup Script
-```
-
-## 4. Core Highlights
-
-- **🧠 OphVLM-R1 Model Driven**: Adopts a lightweight design (2B parameters), possessing deep ophthalmic professional reasoning capabilities despite its small size, supporting the analysis of various ophthalmic image types such as fundus photos, OCT, and anterior segment photos.
-- **🔄 ReAct Architecture Design**: The decision-making process of each agent is divided into Reasoning and Acting phases, allowing doctors to clearly understand the AI's reasoning path, breaking the limitation of traditional AI models' "black box operations."
-- **🎯 Five Professional Agents**: Covers the full process of diagnosis needs from image analysis and disease diagnosis to report writing and knowledge inquiry.
-- **💡 Modularity & Interpretability**: The modular design aligns with doctors' clinical thinking patterns, lowering the barrier to using the AI system and achieving interpretability and traceability of diagnostic decisions.
-
-## 5. Technical Details
-
-### 5.1 Dataset Construction: OphReason-Vision
-
-To solve the problems of strong heterogeneity in ophthalmic multimodal data and the lack of reasoning logic, we designed a three-stage closed-loop pipeline that transforms 100K+ raw clinical cases and 30+ public datasets into 15,418 verified reasoning trajectories.
-
-![Data Pipeline](figures/data_pipeline.png)
-
-**Stage 1: Data Standardization** - Integrates 100K+ clinical cases with 30+ public datasets using a dual-stream strategy. The text stream parses unstructured electronic medical records into standardized JSON, resolving inconsistent terminology through a curated ophthalmic synonym table. The visual stream generates detailed textual descriptions for datasets that contain only image-level labels.
-
-**Stage 2: Structured Reasoning Synthesis** - Uses Intern-S1 to generate multi-dimensional instructions covering lesion localization, multimodal diagnosis, and knowledge question answering. For each instruction, it produces a Chain-of-Thought reasoning chain following the clinical diagnostic workflow: visual sign identification, knowledge retrieval, pathological analysis, and clinical decision. Quality control employs an LVLM-as-a-Judge mechanism using Intern-S1 with threshold τ = 0.7.
-
-**Stage 3: Expert-Collaborative Optimization** - Enlists three board-certified ophthalmologists to review the 18% of samples flagged as difficult, achieving inter-rater agreement Cohen's κ = 0.82. Disagreements are resolved through discussion until consensus.
-
-### 5.2 Model Training: Two-Stage Architecture
-
-OphVLM-R1 uses InternVL3.5-2B as its base model. Training proceeds in two stages: the first injects ophthalmic domain knowledge through parameter-efficient supervised fine-tuning, and the second unlocks deep clinical reasoning through curriculum reinforcement learning with sequence-level policy optimization.
-
-![Two-Stage Training](figures/two_stage_training.png)
-
-**Stage 1: LoRA Supervised Fine-Tuning** - Employs Low-Rank Adaptation for parameter-efficient fine-tuning, constraining the weight update to low-rank decomposition. Key hyperparameters: LoRA rank r = 64, scaling factor α = 128, applied to the Wq, Wk, Wv, and Wo attention projections. Learning rate 1 × 10⁻⁴ with cosine annealing, batch size 32, 3 epochs. Trainable parameters constitute approximately 0.5% of the total.
-
-**Stage 2: Curriculum Reinforcement Learning** - Addresses GRPO instability in long reasoning chains through Group Sequence-level Policy Optimization (GSPO), which computes importance ratios at the sequence level. The curriculum spans four stages of increasing complexity following the clinical diagnostic pathway:
-1. **Lesion Localization**: Single-image visual perception
-2. **Multi-image Selection**: Cross-image comparison
-3. **Report Generation**: Structured synthesis
-4. **Knowledge Q&A**: Integration of visual findings with clinical knowledge
-
-Key hyperparameters: ε = 0.2, G = 8, LR 5 × 10⁻⁶, β_KL = 0.04, λ₁ = 0.6 (rule reward), λ₂ = 0.4 (judge reward). Each stage trains for 2 epochs.
-
-**Hard Sample Dynamic Backtracking** - An on-policy resampling mechanism increases the sampling probability of prompts whose rewards fall below a threshold in the most recent k = 5 rounds, addressing the long tail of difficult clinical cases.
-
-## 6. Model Performance
-
-Within the 2B parameter class, OphVLM-R1 outperforms InternVL3.5-4B across all benchmarks with an average accuracy of 56.41% versus 51.95%, and exceeds the domain-adapted OphthaReason-Qwen-3B at 54.11%. On out-of-domain OmniMedVQA-Eye, our model achieves 88.24%, comparable to the off-the-shelf 7B model Lingshu-7B at 87.42%.
-
-| Model | In-Domain | Fundus | Omni-Eye | Avg.* |
-|-------|-----------|--------|----------|-------|
-| InternVL3.5-2B | 34.50% | 36.61% | 55.47% | 42.19% |
-| InternVL3.5-4B | 36.23% | 42.10% | 77.51% | 51.95% |
-| Lingshu-7B | **44.20%** | 41.29% | 87.42% | **57.64%** |
-| OphthaReason-Qwen-3B | 36.60% | 38.87% | 86.86% | 54.11% |
-| **OphVLM-R1 (Ours)** | 38.40% | 42.58% | **88.24%** | 56.41% |
-
-*Note: Average across benchmarks is for reference only due to differing task scales, evaluation formats, and random baselines; per-benchmark results are primary.
-
-## 7. Project Effect Demo
-
-The system integrates five major agents. Here are the actual operating effects of each agent:
-
-### 7.1 Interactive VQA
-Supports uploading ophthalmic images for free Q&A interaction and multi-turn follow-up questions.
-![Interactive VQA Demo](figures/demo_interactive_vqa.png)
-
-### 7.2 Lesion Localization
-Automatically identifies and annotates lesion areas in ophthalmic images, outputting standardized bounding boxes.
-![Lesion Localization Demo](figures/demo_lesion_localization.png)
-
-### 7.3 Diagnostic Assistant
-Provides multiple possible disease diagnosis suggestions, including confidence levels and diagnostic basis.
-![Diagnostic Assistant Demo](figures/demo_aux_diagnosis.png)
-
-### 7.4 Report Generation
-Automatically generates structured ophthalmic image diagnostic reports, including imaging findings and diagnostic opinions.
-![Report Generation Demo](figures/demo_report_generation.png)
-
-### 7.5 Knowledge Base
-Professional ophthalmic medical knowledge Q&A system, citing authoritative sources.
-![Knowledge Base Demo](figures/demo_knowledge_base.png)
-
-## 8. Development Guide
+## Development
 
 ### Adding a New Agent
-1. **Create Agent Module** (`app/agents/new_agent.py`)
-2. **Register Agent** (`app/api/router.py`)
-3. **Create Frontend UI** (`app/static/js/agents/new_agent.js`)
 
-### Custom Configuration
-Edit `app/core/config.py` to adapt to different deployment environments.
+1. Create the agent module under `app/agents/`.
+2. Register its API route under `app/api/`.
+3. Add the corresponding frontend module under `app/static/js/agents/`.
 
-## 9. FAQ
+Deployment-specific settings are managed in `app/core/config.py` and `.env`.
 
-1. **Model Service Connection Failure**
-   - Check `OPENAI_API_BASE` configuration in `.env`.
-   - Confirm if the model service is running normally.
+## FAQ
 
-2. **File Upload Issues**
-   - Check permissions for `app/static/uploads/` directory.
+1. **Model service connection failure**
+   - Check `OPENAI_API_BASE` and related credentials in `.env`.
+   - Confirm that the configured model service is running and reachable.
+2. **File upload issues**
+   - Check permissions for `app/static/uploads/`.
+3. **Database issues**
+   - Run `python init_db.py` to initialize the local database again.
 
-3. **Database Issues**
-   - Run `python init_db.py` to re-initialize.
+## Open Source Status
 
-## 10. Open Source Status
+### Available
 
-### ✅ Open Sourced
-- **System Architecture Code**: Complete frontend/backend code, API interfaces, database models
-- **Partial Datasets**: OphReason-Vision dataset subset (3,418 samples)
-- **OphVLM-R1 Model**: Model weights available on ModelScope
+- **System code**: frontend/backend implementation, API routes, services, and database models.
+- **OphReason-Vision subset**: 3,418 cold-start samples on Hugging Face and ModelScope.
+- **OphVLM-R1 model**: model weights on Hugging Face and ModelScope.
 
-### 🔄 To Be Released
-- **Full Datasets**: Complete OphReason-Vision dataset (15,418 samples)
-- **Model Training Scripts**: Cold-start fine-tuning and curriculum reinforcement learning scripts
-- **Model Evaluation Code**: Model performance evaluation code
+### Planned Releases
 
-> **Note**: Full datasets, model weights, and training code will be released in batches after completing medical data privacy and ethical reviews.
+- Remaining OphReason-Vision records after completion of privacy and ethics review.
+- Cold-start SFT and curriculum reinforcement learning scripts.
+- Model evaluation code.
 
-## 11. Acknowledgements
-
-The successful progress of this project relies on the key support from the InternLM Practical Camp, the InternLM Ecosystem, and the Datawhale Open Source Community. We sincerely thank these open-source communities for providing a solid foundation for this project and jointly promoting the development of the ophthalmic AI field.
-
-This work was supported by the National Natural Science Foundation of China under Grant 62573204 and 62173153.
-
-## 12. Citation
-
-If you use OphVLM-R1, OphReason-Vision, or OphAgent in your research, please cite our work:
+## Citation
 
 ```bibtex
-@inproceedings{qi2026ophvlmr1,
-  title={OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum RL},
+@inproceedings{qi2026ophvlm,
+  title={OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum Reinforcement Learning},
   author={Qi, Zishi and Hu, Xiaoya and Pan, Huilin and Gao, Ang and Hou, Jiaxin and Li, Jiankun and Qian, Yongao},
   booktitle={Proceedings of the World Artificial Intelligence Conference Academic (WAICA)},
   year={2026}
 }
 ```
 
-## 13. Related Links
+## Acknowledgements
 
-- **Open Source Code**: https://github.com/QiZishi/OphAgent/
-- **OphVLM-R1 Model**: [ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1) | [HuggingFace](https://huggingface.co/QiZishi/OphVLM-R1)
-- **OphReason-Vision Dataset**: [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision) | [HuggingFace](https://huggingface.co/datasets/QiZishi/OphReason-Vision)
-- **Paper**: https://waica2026.worldaic.com.cn/
-- **InternVL Open Source**: https://github.com/OpenGVLab/InternVL
-- **InternLM Online Experience**: https://chat.intern-ai.org.cn/
-- **InternLM Practical Camp**: https://colearn.intern-ai.org.cn/go
-- **Datawhale Open Source Community**: https://www.datawhale.cn/
+The development of this project benefits from the InternLM ecosystem, OpenGVLab, the InternLM Practical Camp, and the Datawhale open-source community. We sincerely thank these communities for providing the model, tooling, and learning resources that support the project, and we thank the ophthalmologists who contributed to data review and quality assurance.
+
+## Related Links
+
+- **InternVL**: <https://github.com/OpenGVLab/InternVL>
+- **InternLM online experience**: <https://chat.intern-ai.org.cn/>
+- **InternLM Practical Camp**: <https://colearn.intern-ai.org.cn/go>
+- **Datawhale**: <https://www.datawhale.cn/>
