@@ -1,0 +1,20 @@
+---
+source: medlive
+title: 中医药防控儿童青少年近视指南（学生与家长版）中华中医药学会(CACM,China Association of Chinese Medcine)
+url: https://guide.medlive.cn/guideline/23684
+disease: 近视
+type: guideline_abstract
+language: zh
+---
+
+中医药防控儿童青少年近视指南（学生与家长版）_临床指南
+中医药防控儿童青少年近视指南（学生与家长版）
+2021-06-30
+中华中医药学会(CACM,China Association of Chinese Medcine)
+中国中医眼科杂志.2021.31(6):385-392.
+本指南给出了中医对近视的认识、近视的危害、
+防控要点、防控手段及防控误区等。本指南适用于
+18 岁以下儿童青少年近视防控。适合儿童青少年及
+其家长或监护人使用。
+临床指南app 查看下载
+/ 没有更多了 /

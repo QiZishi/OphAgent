@@ -1,0 +1,3 @@
+# Optional offline-only dependencies. Do not install in the production API image.
+a-evolve==0.1.0
+gepa==0.1.1

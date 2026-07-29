@@ -1,66 +1,27 @@
-﻿# Python
+.env
+.DS_Store
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
+.pytest_cache/
+.coverage
+htmlcov/
 venv/
-ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual Environment
-venv/
-ENV/
-env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Database
-*.db
-*.sqlite
-*.sqlite3
-
-# Environment variables
-.env
-
-# Logs
-*.log
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Uploads (user data)
-app/static/uploads/user_*/
-
-# Backup files
-*.backup
-*.bak
-
-# Temporary files
-*.tmp
-update_readme.ps1
-
-# GitHub Copilot instructions
-.github/copilot-instructions.md
-
+frontend/node_modules/
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+skills/.candidates/
+frontend/*.tsbuildinfo
+frontend/vite.config.js
+frontend/vite.config.d.ts
+app/static/uploads/*
+!app/static/uploads/.gitkeep
+app/db/*.db
+data/runtime/
+data/evolution/
+data/knowledge_base/index/
+.worktrees/
+*.db-shm
+*.db-wal
+/ophthalmic_plugin_test_cases
+MEDICAL_AGENT_SYSTEM_OPTIMIZATION_GUIDE.md

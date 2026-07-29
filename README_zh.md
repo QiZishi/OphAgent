@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="figures/模型图标.png" width="120" alt="OphVLM-R1 项目图标">
+  <img src="figures/system_logo.png" width="120" alt="OphAgent 系统 Logo">
 </p>
 
 <h1 align="center">OphAgent · “灵瞳”眼科智慧诊疗系统</h1>
 
-<p align="center"><strong>基于 ReAct 的眼科多模态推理与临床辅助平台</strong></p>
+<p align="center"><strong>可持久化、带安全门禁、支持流式响应的眼科 Agent 工作台</strong></p>
 
 <p align="center">
   <a href="README.md">English</a> · <a href="README_zh.md">简体中文</a>
@@ -41,16 +41,16 @@
 - **2025.11.28** 📊 高质量眼科多模态推理数据集 **OphReason-Vision** 部分子集已在 ModelScope 平台正式开源发布！
   - 🔗 数据集链接：<https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision>
 
-- **2025.11.23** 🎬 “灵瞳”眼科智慧诊疗系统实机演示视频已在 B 站正式发布，展示五大智能体全流程诊疗能力！
+- **2025.11.23** 🎬 “灵瞳”眼科智慧诊疗系统初代五入口版本实机演示视频在 B 站发布。当前 OphAgent 已在此基础上完成全面架构重构。
   - 🎥 视频链接：<https://www.bilibili.com/video/BV1g4UTBZEEm/>
 
 ## 项目背景
 
 **“灵瞳”眼科智慧诊疗系统**是基于自主研发的 **OphVLM-R1 眼科多模态推理模型**构建的专业化医疗 AI 平台。该项目由华中科技大学人工智能与自动化学院人工智能安全实验室团队开发，旨在缓解全球眼科优质医疗资源分布不均，以及基层医疗机构误诊、漏诊率较高等现实问题。
 
-眼科多模态大语言模型面临三大挑战：训练数据缺乏结构化推理链、单阶段训练难以培养深度临床推理能力，以及模型规模过大制约资源受限环境中的部署。项目通过一体化的“数据—模型—智能体”技术栈解决这些问题：OphReason-Vision 将异构眼科数据转化为经过专家验证的推理轨迹；OphVLM-R1 通过 LoRA 冷启动和课程强化学习获得临床推理能力；OphAgent 则以模块化临床辅助系统对外提供这些能力。
+眼科多模态大语言模型面临三大挑战：训练数据缺乏结构化推理链、单阶段训练难以培养深度临床推理能力，以及模型规模过大制约资源受限环境中的部署。项目通过一体化的“数据—模型—智能体”技术栈解决这些问题：OphReason-Vision 将异构眼科数据转化为经过专家验证的推理轨迹；OphVLM-R1 通过 LoRA 冷启动和课程强化学习获得临床推理能力；OphAgent 则通过可持久化临床辅助运行时统一调度模型、检索与专科能力。
 
-系统基于书生大模型生态，包括 InternVL3.5 和 Intern-S1，采用 **ReAct（Reasoning + Acting）智能体架构**，集成智能问答、病灶定位、辅助诊断、报告生成与眼科知识库五大专业 AI 智能体。通过数据集构建流水线、两阶段模型训练和 ReAct 智能体系统，“灵瞳”推动眼科智能诊疗从“感知识别”走向“认知推理”，并使中间决策和工具操作保持可检查、可追溯。
+当前 OphAgent 结合 **AgentScope ReAct 智能体**、确定性医疗安全门禁、类型化 DAG 规划、多模态工具与带来源治理的知识检索。系统对外提供病灶定位、辅助评估和报告生成三个专业插件；对话、证据检索、文档解析、语音和记忆则作为核心能力统一编排。界面只呈现公开执行摘要，不展示隐藏 Chain-of-Thought。
 
 **核心目标：**通过 AI 技术赋能临床医生，尤其是基层医疗工作者，提升眼科疾病的早期筛查与精准诊断能力。“灵瞳”目前定位为研究与临床辅助系统，不能替代专业医疗判断。
 
@@ -124,123 +124,210 @@ on-policy 重采样机制跟踪最近 $k=5$ 轮中持续低于奖励阈值的 pr
 
 ## OphAgent 设计架构
 
-“灵瞳”系统基于 ReAct 架构构建，实现 **Reasoning → Acting → Observation** 的闭环。每个智能体首先分析临床请求和现有多模态证据，然后选择并执行适当操作，最后将返回观察结果纳入下一步推理。该设计使任务拆解、工具执行和返回证据保持可检查、可追溯。
+OphAgent-Pro 3.0 不再是五个彼此隔离的聊天接口，而是一套有状态 Agent 运行时：每个请求都会先经过分诊与路由，再进入有预算的执行档位，以可恢复 Run 的形式持久化，并通过可重放事件交付给 React 工作台。
+
+```mermaid
+flowchart LR
+    UI["React 工作台<br/>对话 · 文件 · 项目 · 记忆 · 技能"] --> API["FastAPI<br/>鉴权 · REST · SSE · WebSocket"]
+    API --> GATE["确定性红旗门禁<br/>附件归属 · 运行预算"]
+    GATE --> ROUTER["意图路由<br/>Quick · Standard · Deep"]
+    ROUTER --> DAG["类型化 DAG 规划<br/>并行节点 + 显式依赖"]
+    DAG --> AGENTS["AgentScope ReAct 角色<br/>监督 · 临床 · 证据 · 专科 · 审查 · 报告"]
+    AGENTS --> TOOLS["真实外部能力<br/>多模态 · 搜索 · MinerU · ASR/TTS"]
+    TOOLS --> STATE["ClinicalState + 证据账本<br/>产物 · 已确认记忆"]
+    STATE --> STORE["SQLite WAL 运行时存储<br/>Run · 事件 · 附件 · 上下文快照"]
+    STORE --> API
+```
+
+### 3.0 架构升级
+
+- **可持久化 Run 协议**：每次状态迁移、工具结果、生成产物和公开进度事件都有稳定的 `run_id`、`trace_id` 与单调递增序号。
+- **真实流式响应**：支持 Provider Streaming 的终端文本会以 `answer.delta` 通过 SSE 推送；客户端先按持久化游标补齐早期事件，断线后从游标恢复且不重复内容。
+- **Quick / Standard / Deep 路由**：确定性的意图与风险规则选择有界计划；急症红旗可覆盖用户指定的 Quick 模式。
+- **类型化临床状态**：用户事实、缺失信息、红旗、证据与模型观察彼此分离，模型推测不能静默升级为已确认病情。
+- **可组合专业插件**：`lesion_localizer`、`aux_diagnosis`、`report_generator` 可由用户指定，也可由路由器组合调用。
+- **受控记忆与技能**：记忆先进入 `proposed`；导入的 `SKILL.md` 先隔离，结构、依赖、医疗安全与 checksum 门禁通过后才能启用。
+- **真实能力健康状态**：模型、搜索、解析或语音能力不可用时会明确报告，不使用预设医学结论冒充真实结果。
+- **隐私型可观测性**：OpenTelemetry 只允许导出标识、状态、耗时与 Token 聚合；Prompt、患者原文、文件内容和密钥不会进入遥测。
+
+## 产品能力
+
+| 能力 | 当前实现 |
+|---|---|
+| 多轮眼科问答 | 持久化 Conversation、上下文快照、有界历史压缩和追问路由继承 |
+| 多模态复核 | 经过鉴权的眼底照、OCT、眼前节影像上传，返回经校验的观察与像素/归一化区域 |
+| 病灶定位 | 只渲染通过坐标校验的边界框；模型未返回有效区域时不会补造病灶框 |
+| 辅助评估 | 给出定性鉴别的支持、反对与缺失证据；支持程度不等同于患病概率 |
+| 报告生成 | 带引用的 Markdown 报告、可编辑产物以及 MD/PDF/DOCX/JPG 导出 |
+| 知识检索 | 指南优先 BM25 + 可选 BGE-M3 Embedding/Rerank、来源生命周期、PDF 页图与轻量图谱扩展 |
+| 语音与文档 | 可选服务端 ASR/TTS、鉴权音频上传、MinerU/本地文档解析 |
+| 工作区管理 | 项目、私人文件、生成产物、个人 Provider 配置、记忆、技能、来源治理与能力健康状态 |
+
+## 执行档位
+
+| 档位 | 典型请求 | 运行行为 |
+|---|---|---|
+| **Quick** | 简单非医疗事实或算术 | 单次有界直接回答，不进入检索或报告流水线 |
+| **Standard** | 知识问答、单张影像任务或常规临床请求 | 相关临床、证据与影像节点可并行执行，再统一整合 |
+| **Deep** | 复杂多模态评估、高风险症状或报告组合 | 加入相关亚专科复核，并执行 draft → critic → final 安全链 |
+
+界面只展示克制的阶段摘要、经校验结果和来源证据，不公开私有 Chain-of-Thought。
+
+## 医疗安全与可靠性
+
+- 模型路由前先执行确定性红旗规则，必要时强制升级急症提示。
+- 附件只能通过鉴权 ID 引用；REST 与 WebSocket 公共接口均拒绝客户端直接提交服务器路径。
+- 模型调用次数、Token、总耗时和节点并发均受预算约束；取消会持久化并向执行节点传播。
+- 必需节点失败会生成结构化失败事件；可选能力失败会给出明确警告。
+- 引用按“医学主张段落”检查，不会因全文只出现一个标记就通过。
+- 过期或已被替代的来源默认不参与检索；低可信来源会降权并保留标签。
+- 服务重启会把未完成任务标记为 `interrupted`，已完成步骤仍可用于恢复或重试。
+- 本系统定位为研究级临床辅助工具，不能给出最终确诊，也不能替代急诊与专业医疗评估。
+
+## 技术栈
+
+| 层级 | 实现 |
+|---|---|
+| Web 客户端 | React 19、TypeScript 5.8、Vite 6，适配桌面与移动端 |
+| API | FastAPI 0.138、鉴权 REST、Server-Sent Events 与 WebSocket 兼容接口 |
+| Agent 运行时 | AgentScope 1.0 ReAct 角色、确定性路由与类型化异步 DAG |
+| 持久化 | SQLModel 账号/对话数据库 + SQLite WAL 运行事件存储 |
+| 知识系统 | BM25、NumPy 向量持久化、OpenAI-compatible Embedding/Rerank、PDF 页图、OphthaGraph |
+| 可观测性 | 带导出时隐私白名单的 OpenTelemetry |
+| 工程质量 | Pytest、Vitest、ESLint、Ruff、Playwright 与 axe 无障碍检查 |
+
+## 项目结构
 
 ```text
 OphAgent/
 ├── app/
-│   ├── main.py              # FastAPI 主应用
-│   ├── agents/              # ReAct 智能体
-│   ├── api/                 # API 路由
-│   ├── services/            # 业务服务
-│   └── static/              # Web 界面
-├── figures/                 # 文档资源
-├── requirements.txt
+│   ├── api/             # 鉴权 REST、SSE 与 WebSocket 接口
+│   ├── auth/            # JWT Cookie、会话撤销与登录保护
+│   ├── domain/          # Run、事件、证据与 ClinicalState 契约
+│   ├── evolution/       # 去内容化在线信号与离线门禁 Harness
+│   ├── knowledge/       # 来源生命周期、混合检索与 OphthaGraph
+│   ├── observability/   # 隐私过滤遥测
+│   ├── plugins/         # 对外专业插件注册表
+│   ├── runtime/         # 路由、规划、AgentScope 角色、存储与导出
+│   ├── services/        # 记忆、技能与加密 Provider 配置
+│   ├── tools/           # 多模态、搜索、文档与语音客户端
+│   └── main.py
+├── data/knowledge_base/raw/
+├── frontend/            # React 工作台、单元测试与 Playwright 场景
+├── scripts/             # 可移植知识库 CLI 与可选演化安装脚本
+├── skills/              # 内置受控 Agent 技能
+├── tests/               # 后端契约、安全与编排测试
+├── .env.example
+├── init_db.py
 └── run.py
 ```
-
-- **后端**：基于 FastAPI 搭建，支持异步处理与自动 API 文档；通过 SQLModel 统一数据验证和数据库模型，并使用 SQLite 提供轻量级持久化。
-- **前端**：采用原生 JavaScript ES6+ 开发，无框架依赖，并通过响应式布局适配桌面和移动设备。
-- **通信**：集成 WebSocket，实现实时通信与模型响应流式输出。
-- **智能体层**：五个模块化智能体均遵循 ReAct 工作流，并分别对应不同的临床辅助任务。
-
-## 项目核心亮点
-
-- **🧠 OphVLM-R1 模型驱动**：轻量级 2B 参数眼科推理模型支持眼底照片、OCT 和眼前节影像等多种眼科图像。
-- **🔄 ReAct 架构设计**：每个智能体将推理与行动分离，相比单次黑盒式模型响应，更便于检查中间决策过程。
-- **🎯 五大专业智能体**：覆盖影像交互、病灶分析、候选诊断、报告撰写和知识查询。
-- **💡 模块化与可解释性**：不同临床能力由相互独立的功能组件承载，便于分别配置、维护和扩展。
-
-## 核心功能
-
-### 智能问答
-
-支持上传眼科影像进行开放式问答和多轮追问，使用户能够根据新发现持续细化问题。
-
-![智能问答演示](figures/demo_interactive_vqa.png)
-
-### 病灶定位
-
-自动识别并标注眼科影像中的疑似病灶区域，返回标准化边界框供后续检查。
-
-![病灶定位演示](figures/demo_lesion_localization.png)
-
-### 辅助诊断
-
-提供多个候选疾病诊断建议，并给出置信信息和支持诊断的依据，辅助临床复核。
-
-![辅助诊断演示](figures/demo_aux_diagnosis.png)
-
-### 报告生成
-
-自动生成结构化眼科影像报告，包含影像所见和诊断意见。
-
-![报告生成演示](figures/demo_report_generation.png)
-
-### 眼科知识库
-
-提供专业眼科医学知识问答，并在检索服务完成配置后返回支持来源。
-
-![知识库演示](figures/demo_knowledge_base.png)
 
 ## 快速开始
 
 ### 环境要求
 
-- Python 3.8+
-- 推荐 8 GB+ RAM
-- 本地模型部署时可选用 GPU
+- Python 3.11+
+- Node.js 20+ 与 npm
+- OpenAI-compatible 主 Agent 模型和多模态 Sub-agent 模型
+- 推荐 8 GB+ RAM；只有本地托管模型时才需要 GPU
 
 ### 安装步骤
 
-1. 克隆项目：
+```bash
+git clone git@github.com:QiZishi/OphAgent.git
+cd OphAgent
 
-   ```bash
-   git clone https://github.com/QiZishi/OphAgent.git
-   cd OphAgent
-   ```
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
-2. 安装依赖：
+npm --prefix frontend ci
+npm --prefix frontend run build
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+cp .env.example .env
+# 在 .env 中配置 JWT_SECRET_KEY、AGENT_* 与 SUB_AGENT_*。
 
-3. 配置环境变量：
+python init_db.py
+python run.py
+```
 
-   ```bash
-   cp .env.example .env
-   # 编辑 .env，配置模型服务。
-   ```
+访问 <http://localhost:8013>，创建账号后即可开始对话。默认 `STRICT_STARTUP=true`，必需模型凭据缺失时会在启动阶段直接报错。
 
-4. 初始化数据库并启动系统：
+### 最小配置
 
-   ```bash
-   python init_db.py
-   python run.py
-   ```
+```dotenv
+JWT_SECRET_KEY=请替换为足够长的随机字符串
 
-5. 访问 <http://localhost:8012>，注册账号并开始使用。
+AGENT_URL=https://your-provider.example/v1
+AGENT_API_KEY=...
+AGENT_MODEL=...
+
+SUB_AGENT_URL=https://your-provider.example/v1
+SUB_AGENT_API_KEY=...
+SUB_AGENT_MODEL=...
+```
+
+Embedding、Rerank、AnySearch/Tavily、ASR、TTS、MinerU 与 OTLP 均为可选能力。工作区会显示其真实状态，各能力可独立降级。
+
+## 知识语料
+
+系统会自动索引 `data/knowledge_base/raw/` 下的受支持文件。可移植 CLI 能导入其他目录，不再依赖开发者本机绝对路径：
+
+```bash
+python scripts/build_knowledge_base.py \
+  --collect \
+  --source local-guidelines=/absolute/path/to/guidelines
+
+python scripts/build_knowledge_base.py --build-index --lexical-only
+python scripts/build_knowledge_base.py --search "青光眼视野随访"
+python scripts/build_knowledge_base.py --stats
+```
+
+请只处理和分发已获授权的资料。用户导入来源默认处于未核验状态，应在来源治理工作区完成复核。
+
+## API 与流式事件
+
+| 接口 | 用途 |
+|---|---|
+| `POST /auth/register`、`POST /auth/login` | 创建账号或登录 |
+| `POST /api/v1/conversations/{id}/messages` | 幂等创建消息与后台 Run |
+| `GET /api/v1/runs/{id}` | 读取持久化 Run 状态 |
+| `GET /api/v1/runs/{id}/events` | 按游标重放有序事件 |
+| `GET /api/v1/runs/{id}/events/stream` | 带游标恢复与 Heartbeat 的 SSE |
+| `POST /api/v1/upload` | 鉴权类型化附件上传 |
+| `GET /api/v1/artifacts`、`GET /api/v1/attachments` | 私有生成产物与上传文件 |
+| `WS /ws/runs/{id}` | 鉴权 WebSocket 事件桥 |
+
+交互式 OpenAPI 文档位于 `/docs`。
 
 ## 开发说明
 
-### 添加新智能体
+```bash
+source venv/bin/activate
+pip install -r requirements-dev.txt
 
-1. 在 `app/agents/` 下创建智能体模块。
-2. 在 `app/api/` 下注册对应 API 路由。
-3. 在 `app/static/js/agents/` 下添加对应前端模块。
+python -m ruff check app tests scripts run.py init_db.py
+pytest
 
-部署相关设置通过 `app/core/config.py` 与 `.env` 管理。
+npm --prefix frontend test -- --run
+npm --prefix frontend run lint
+npm --prefix frontend run build
 
-## 常见问题
+npm --prefix frontend exec playwright install chromium
+npm --prefix frontend run test:e2e -- workspace.spec.ts
+```
 
-1. **模型服务连接失败**
-   - 检查 `.env` 中的 `OPENAI_API_BASE` 及相关凭据。
-   - 确认所配置的模型服务正常运行且网络可达。
-2. **文件上传问题**
-   - 检查 `app/static/uploads/` 的目录权限。
-3. **数据库问题**
-   - 运行 `python init_db.py` 重新初始化本地数据库。
+新增能力时：
+
+1. 在 `app/domain/` 新增或扩展类型化输入输出契约。
+2. 在 `app/tools/` 注册外部行为，并定义真实健康状态。
+3. 在 `app/runtime/` 更新路由与规划，不能绕过风险门禁和运行预算。
+4. 为公开事件、附件归属、失败和取消路径补充回归测试。
+5. React 工作台只展示通过校验的公开摘要。
+
+## 受控离线演化
+
+线上反馈只保存有界、去内容化信号，不能自动改写生产 Prompt、代码、技能或医疗事实。候选修改在隔离 Git worktree 中运行，晋升前必须通过同病例配对评测、sealed-test attestation、切片非劣、成本/延迟门禁与人工审批。官方可选实现通过 `requirements-evolution.txt` 单独安装。
 
 ## 开源状态
 

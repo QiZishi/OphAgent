@@ -1,0 +1,32 @@
+---
+source: nice
+title: NICE NG81 - 青光眼诊断与管理指南
+url: https://www.nice.org.uk/guidance/ng81/chapter/Recommendations
+disease: glaucoma
+type: clinical_guideline
+---
+
+#### 1.1.1
+
+      
+        Before referral for further investigation and diagnosis of COAG and related conditions, offer all of the following tests:
+
+        
+          
+- 
+            central visual field assessment using standard automated perimetry (full threshold or supra-threshold)
+
+          
+          
+- 
+            optic nerve assessment and fundus examination using stereoscopic slit lamp biomicroscopy (with pupil dilatation if necessary), and optical coherence tomography (OCT) or optic nerve head image if available
+
+          
+          
+- 
+            intraocular pressure (IOP) measurement using Goldmann‑type applanation tonometry
+
+          
+          
+- 
+            peripheral anterior chamber configuration and depth assessments using gonioscopy or, if not available or the person prefers, the van Herick test or OCT. [2017]

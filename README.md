@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="figures/模型图标.png" width="120" alt="OphVLM-R1 project icon">
+  <img src="figures/system_logo.png" width="120" alt="OphAgent system logo">
 </p>
 
 <h1 align="center">OphAgent · “LingTong” Ophthalmic Intelligent Diagnosis System</h1>
 
-<p align="center"><strong>A ReAct-based ophthalmic multimodal reasoning and clinical assistance platform</strong></p>
+<p align="center"><strong>A durable, safety-gated and streaming ophthalmic Agent workspace</strong></p>
 
 <p align="center">
   <a href="README.md">English</a> · <a href="README_zh.md">简体中文</a>
@@ -41,16 +41,16 @@
 - **2025.11.28** 📊 The high-quality ophthalmic multimodal reasoning dataset **OphReason-Vision** subset has been officially open-sourced on the ModelScope platform!
   - 🔗 Dataset Link: <https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision>
 
-- **2025.11.23** 🎬 The “LingTong” Ophthalmic Intelligent Diagnosis System demo video has been officially released on Bilibili, showcasing the full-process diagnostic capabilities of all five intelligent agents!
+- **2025.11.23** 🎬 The demo video for the original five-entry version of the “LingTong” system was released on Bilibili. The current OphAgent architecture has since been comprehensively redesigned.
   - 🎥 Video Link: <https://www.bilibili.com/video/BV1g4UTBZEEm/>
 
 ## Background
 
 **“LingTong” Ophthalmic Intelligent Diagnosis System** is a specialized medical AI platform built upon the self-developed **OphVLM-R1 ophthalmic multimodal reasoning model**. Developed by the AI Safety Laboratory team at the School of Artificial Intelligence and Automation, Huazhong University of Science and Technology, the project aims to address the global disparity in high-quality ophthalmic medical resources and the high rates of misdiagnosis and missed diagnosis in primary medical institutions.
 
-Ophthalmic multimodal large language models face three challenges: training data lacking structured reasoning chains, single-stage training that fails to cultivate deep clinical reasoning, and large model sizes that limit deployment in resource-constrained settings. The project addresses these challenges through an integrated data–model–agent stack. OphReason-Vision converts heterogeneous ophthalmic data into expert-verified reasoning trajectories; OphVLM-R1 develops clinical reasoning through a LoRA cold start followed by curriculum reinforcement learning; and OphAgent exposes the resulting capabilities through a modular clinical-assistance system.
+Ophthalmic multimodal large language models face three challenges: training data lacking structured reasoning chains, single-stage training that fails to cultivate deep clinical reasoning, and large model sizes that limit deployment in resource-constrained settings. The project addresses these challenges through an integrated data–model–agent stack. OphReason-Vision converts heterogeneous ophthalmic data into expert-verified reasoning trajectories; OphVLM-R1 develops clinical reasoning through a LoRA cold start followed by curriculum reinforcement learning; and OphAgent exposes model, retrieval and specialist capabilities through a durable clinical-assistance runtime.
 
-Based on the InternLM ecosystem, including InternVL3.5 and Intern-S1, the system adopts a **ReAct (Reasoning + Acting) agent architecture** and integrates five professional AI agents: Interactive VQA, Lesion Localization, Diagnostic Assistant, Report Generation, and Ophthalmic Knowledge Base. Through the dataset construction pipeline, two-stage model training, and the ReAct agent system, LingTong advances ophthalmic intelligent diagnosis from “perceptual recognition” toward “cognitive reasoning” while keeping intermediate actions inspectable and traceable.
+The current OphAgent combines **AgentScope ReAct agents**, deterministic medical safety gates, typed DAG planning, multimodal tools and provenance-aware retrieval. It exposes three public professional plugins—lesion localization, auxiliary assessment and report generation—while conversation, evidence retrieval, document parsing, speech and memory are coordinated as core capabilities rather than separate top-level agents. Only public execution summaries are displayed; hidden chain-of-thought is never exposed.
 
 **Core objective:** empower clinicians, especially primary healthcare workers, with AI-assisted early screening and precise diagnosis capabilities for ophthalmic diseases. LingTong is a research and clinical-assistance system and is not a substitute for professional medical judgment.
 
@@ -124,123 +124,210 @@ Within the reported comparisons, OphVLM-R1 achieves 88.24% on out-of-domain Omni
 
 ## OphAgent Design Architecture
 
-The LingTong system is built on a ReAct architecture, implementing a closed loop of **Reasoning → Acting → Observation**. Each agent first analyzes the clinical request and available multimodal evidence, then selects and executes the appropriate action before incorporating the returned observation. This design keeps task decomposition, tool execution, and returned evidence inspectable and traceable.
+OphAgent-Pro 3.0 is not a collection of five isolated chat endpoints. It is a stateful Agent runtime: every request is triaged, routed into a bounded execution profile, recorded as a durable Run, and delivered to the React workspace through replayable events.
+
+```mermaid
+flowchart LR
+    UI["React workspace<br/>chat · files · projects · memory · skills"] --> API["FastAPI<br/>auth · REST · SSE · WebSocket"]
+    API --> GATE["Deterministic red-flag gate<br/>attachment ownership · budgets"]
+    GATE --> ROUTER["Intent router<br/>Quick · Standard · Deep"]
+    ROUTER --> DAG["Typed DAG planner<br/>parallel nodes + dependencies"]
+    DAG --> AGENTS["AgentScope ReAct roles<br/>supervisor · clinical · evidence · specialist · critic · report"]
+    AGENTS --> TOOLS["Real capabilities<br/>multimodal · search · MinerU · ASR/TTS"]
+    TOOLS --> STATE["ClinicalState + evidence ledger<br/>artifacts · confirmed memory"]
+    STATE --> STORE["SQLite WAL runtime store<br/>runs · events · attachments · snapshots"]
+    STORE --> API
+```
+
+### What is new in 3.0
+
+- **Durable Run protocol** — every state transition, tool result, artifact and public progress event has a stable `run_id`, `trace_id` and monotonic sequence.
+- **True response streaming** — terminal prose is emitted as `answer.delta` events over SSE where the route supports provider streaming. Early events are backfilled from the durable cursor, and reconnects resume without duplicating content.
+- **Quick / Standard / Deep routing** — deterministic intent and risk rules select a bounded plan. Emergency signals override a requested quick mode.
+- **Typed clinical state** — user facts, missing information, red flags, evidence and model observations remain distinct; model inference cannot silently become a confirmed patient fact.
+- **Composable professional plugins** — `lesion_localizer`, `aux_diagnosis` and `report_generator` can be selected explicitly or composed by the router.
+- **Controlled memory and skills** — memory enters `proposed` before confirmation; imported `SKILL.md` packages stay quarantined until structure, dependency, safety and checksum gates pass.
+- **Real capability health** — unavailable models, search, parsing or speech services are reported as unavailable. The runtime never substitutes canned medical conclusions.
+- **Privacy-aware observability** — OpenTelemetry exports only allowlisted identifiers, status, latency and aggregate token usage; prompts, patient text, file contents and secrets are excluded.
+
+## Product Capabilities
+
+| Capability | Current behavior |
+|---|---|
+| Multiturn ophthalmic Q&A | Persistent conversations, context snapshots, bounded history compression and follow-up route inheritance |
+| Multimodal review | Authenticated fundus/OCT/anterior-segment uploads, validated observations and optional normalized/pixel regions |
+| Lesion localization | Renders only coordinate-validated boxes; no box is fabricated when the model does not return a valid region |
+| Auxiliary assessment | Qualitative differentials with supporting, opposing and missing evidence; support levels are not disease probabilities |
+| Report generation | Citation-aware Markdown reports, editable artifacts and MD/PDF/DOCX/JPG export |
+| Knowledge retrieval | Guideline-first BM25 + optional BGE-M3 embeddings and Rerank, lifecycle filtering, PDF page visuals and lightweight graph expansion |
+| Speech and documents | Optional server-side ASR/TTS, authenticated audio upload and MinerU/local document parsing |
+| Workspace management | Projects, private files, generated artifacts, provider overrides, memory, skills, source governance and capability health |
+
+## Execution Profiles
+
+| Profile | Typical request | Runtime behavior |
+|---|---|---|
+| **Quick** | Simple non-medical fact or arithmetic | One bounded direct-answer call; no retrieval or report pipeline |
+| **Standard** | Knowledge Q&A, a single image task or routine clinical request | Relevant clinical, evidence and imaging nodes may execute in parallel before synthesis |
+| **Deep** | Complex multimodal assessment, high-risk symptoms or report composition | Specialist review plus draft → critic → final safety pipeline |
+
+The public UI shows concise stage summaries, validated outputs and evidence—not private chain-of-thought.
+
+## Safety and Reliability
+
+- Deterministic red-flag patterns run before model routing and can force emergency escalation.
+- Attachments are referenced by authenticated IDs. Public REST and WebSocket APIs reject client-supplied server file paths.
+- Run budgets bound model calls, tokens, wall time and node concurrency; cancellation is persisted and propagated.
+- Required-node failures produce structured failure events. Optional capability failures yield explicit warnings.
+- Citations are checked at claim-paragraph level, not merely by the presence of one marker.
+- Expired or superseded knowledge sources are excluded by default; low-trust sources are down-weighted and labeled.
+- Restart recovery marks unfinished runs as interrupted and preserves completed work for resume/retry.
+- This is a research-grade clinical assistance system. It does not provide a definitive diagnosis or replace emergency and professional medical assessment.
+
+## Technology Stack
+
+| Layer | Implementation |
+|---|---|
+| Web client | React 19, TypeScript 5.8, Vite 6, responsive desktop/mobile UI |
+| API | FastAPI 0.138, authenticated REST, Server-Sent Events and WebSocket compatibility |
+| Agent runtime | AgentScope 1.0 ReAct roles, deterministic routing and typed async DAG execution |
+| Persistence | SQLModel conversation/account database + SQLite WAL runtime event store |
+| Knowledge | BM25, NumPy vector persistence, OpenAI-compatible embeddings/Rerank, PDF page evidence, OphthaGraph |
+| Observability | OpenTelemetry with export-time privacy filtering |
+| Quality | Pytest, Vitest, ESLint, Ruff, Playwright and axe accessibility checks |
+
+## Repository Layout
 
 ```text
 OphAgent/
 ├── app/
-│   ├── main.py              # FastAPI application
-│   ├── agents/              # ReAct agents
-│   ├── api/                 # API routes
-│   ├── services/            # Business services
-│   └── static/              # Web interface
-├── figures/                 # Documentation assets
-├── requirements.txt
+│   ├── api/             # Authenticated REST, SSE and WebSocket surfaces
+│   ├── auth/            # JWT cookies, session revocation and login controls
+│   ├── domain/          # Run, event, evidence and ClinicalState contracts
+│   ├── evolution/       # Content-free online signals and offline gated harness
+│   ├── knowledge/       # Source lifecycle, hybrid retrieval and OphthaGraph
+│   ├── observability/   # Privacy-filtered tracing
+│   ├── plugins/         # Public professional plugin registry
+│   ├── runtime/         # Router, planner, AgentScope roles, store and exports
+│   ├── services/        # Memory, skill and encrypted provider configuration
+│   ├── tools/           # Multimodal, search, document and speech clients
+│   └── main.py
+├── data/knowledge_base/raw/
+├── frontend/            # React workspace, unit tests and Playwright scenarios
+├── scripts/             # Portable knowledge CLI and optional evolution installer
+├── skills/              # Built-in gated Agent skills
+├── tests/               # Backend contract, safety and orchestration tests
+├── .env.example
+├── init_db.py
 └── run.py
 ```
 
-- **Backend**: built with FastAPI for asynchronous processing and automatic API documentation; SQLModel unifies data validation and database models, while SQLite provides lightweight persistence.
-- **Frontend**: developed with native JavaScript ES6+ without a framework dependency, with responsive layouts for desktop and mobile devices.
-- **Communication**: WebSocket integration supports real-time communication and streaming model responses.
-- **Agent layer**: five modular agents follow the ReAct workflow and map directly to distinct clinical-assistance tasks.
-
-## Core Highlights
-
-- **🧠 OphVLM-R1 driven**: a lightweight 2B-parameter ophthalmic reasoning model supports fundus photographs, OCT, and anterior-segment images.
-- **🔄 ReAct architecture**: each agent separates reasoning from action, making intermediate decisions easier to inspect than a single opaque model response.
-- **🎯 Five professional agents**: the system covers image interaction, lesion analysis, candidate diagnosis, report writing, and knowledge inquiry.
-- **💡 Modularity and interpretability**: clinical capabilities are separated into focused components that can be configured, maintained, and extended independently.
-
-## Core Functions
-
-### Interactive VQA
-
-Supports uploading ophthalmic images for free-form question answering and multi-turn follow-ups, allowing users to refine questions as new findings emerge.
-
-![Interactive VQA demo](figures/demo_interactive_vqa.png)
-
-### Lesion Localization
-
-Automatically identifies and annotates suspected lesion regions in ophthalmic images and returns standardized bounding boxes for downstream inspection.
-
-![Lesion localization demo](figures/demo_lesion_localization.png)
-
-### Diagnostic Assistant
-
-Provides multiple candidate diagnoses with confidence information and supporting diagnostic evidence to assist clinical review.
-
-![Diagnostic assistant demo](figures/demo_aux_diagnosis.png)
-
-### Report Generation
-
-Automatically generates structured ophthalmic imaging reports containing imaging findings and diagnostic impressions.
-
-![Report generation demo](figures/demo_report_generation.png)
-
-### Ophthalmic Knowledge Base
-
-Provides professional ophthalmic medical knowledge question answering and returns supporting sources when the retrieval service is configured.
-
-![Knowledge base demo](figures/demo_knowledge_base.png)
-
 ## Quick Start
 
-### Environment Requirements
+### Requirements
 
-- Python 3.8+
-- 8 GB+ RAM recommended
-- GPU support optional for local model deployment
+- Python 3.11+
+- Node.js 20+ and npm
+- An OpenAI-compatible main model and multimodal sub-agent model
+- 8 GB+ RAM recommended; GPU is only required when hosting models locally
 
 ### Installation
 
-1. Clone the repository:
+```bash
+git clone git@github.com:QiZishi/OphAgent.git
+cd OphAgent
 
-   ```bash
-   git clone https://github.com/QiZishi/OphAgent.git
-   cd OphAgent
-   ```
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
-2. Install dependencies:
+npm --prefix frontend ci
+npm --prefix frontend run build
 
-   ```bash
-   pip install -r requirements.txt
-   ```
+cp .env.example .env
+# Configure JWT_SECRET_KEY, AGENT_* and SUB_AGENT_* in .env.
 
-3. Configure environment variables:
+python init_db.py
+python run.py
+```
 
-   ```bash
-   cp .env.example .env
-   # Edit .env to configure the model service.
-   ```
+Open <http://localhost:8013>, create an account, and start a conversation. With `STRICT_STARTUP=true`, startup fails early when required model credentials are missing.
 
-4. Initialize the database and start the system:
+### Minimum configuration
 
-   ```bash
-   python init_db.py
-   python run.py
-   ```
+```dotenv
+JWT_SECRET_KEY=replace-with-a-long-random-secret
 
-5. Open <http://localhost:8012>, register an account, and start using the system.
+AGENT_URL=https://your-provider.example/v1
+AGENT_API_KEY=...
+AGENT_MODEL=...
+
+SUB_AGENT_URL=https://your-provider.example/v1
+SUB_AGENT_API_KEY=...
+SUB_AGENT_MODEL=...
+```
+
+Embedding, Rerank, AnySearch/Tavily, ASR, TTS, MinerU and OTLP are optional. Their state is visible in the capability panel, and each degrades independently.
+
+## Knowledge Corpus
+
+The application automatically indexes supported files under `data/knowledge_base/raw/`. The portable CLI can import additional directories without developer-specific absolute paths:
+
+```bash
+python scripts/build_knowledge_base.py \
+  --collect \
+  --source local-guidelines=/absolute/path/to/guidelines
+
+python scripts/build_knowledge_base.py --build-index --lexical-only
+python scripts/build_knowledge_base.py --search "glaucoma visual field follow-up"
+python scripts/build_knowledge_base.py --stats
+```
+
+Use only material you are authorized to process and distribute. Uploaded sources begin as unverified and should be reviewed in the source-governance workspace.
+
+## API and Streaming
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /auth/register`, `POST /auth/login` | Create or authenticate an account |
+| `POST /api/v1/conversations/{id}/messages` | Create an idempotent message and background Run |
+| `GET /api/v1/runs/{id}` | Read durable Run state |
+| `GET /api/v1/runs/{id}/events` | Replay ordered events after a cursor |
+| `GET /api/v1/runs/{id}/events/stream` | SSE stream with replay cursor and heartbeat |
+| `POST /api/v1/upload` | Authenticated typed attachment upload |
+| `GET /api/v1/artifacts`, `GET /api/v1/attachments` | Private generated and uploaded files |
+| `WS /ws/runs/{id}` | Authenticated WebSocket event bridge |
+
+Interactive OpenAPI documentation is available at `/docs`.
 
 ## Development
 
-### Adding a New Agent
+```bash
+source venv/bin/activate
+pip install -r requirements-dev.txt
 
-1. Create the agent module under `app/agents/`.
-2. Register its API route under `app/api/`.
-3. Add the corresponding frontend module under `app/static/js/agents/`.
+python -m ruff check app tests scripts run.py init_db.py
+pytest
 
-Deployment-specific settings are managed in `app/core/config.py` and `.env`.
+npm --prefix frontend test -- --run
+npm --prefix frontend run lint
+npm --prefix frontend run build
 
-## FAQ
+npm --prefix frontend exec playwright install chromium
+npm --prefix frontend run test:e2e -- workspace.spec.ts
+```
 
-1. **Model service connection failure**
-   - Check `OPENAI_API_BASE` and related credentials in `.env`.
-   - Confirm that the configured model service is running and reachable.
-2. **File upload issues**
-   - Check permissions for `app/static/uploads/`.
-3. **Database issues**
-   - Run `python init_db.py` to initialize the local database again.
+When adding a capability:
+
+1. Add or extend typed input/output contracts in `app/domain/`.
+2. Register external behavior in `app/tools/` and declare real health semantics.
+3. Update routing/planning in `app/runtime/` without bypassing risk gates or budgets.
+4. Add replayable public events and tests for ownership, failure and cancellation paths.
+5. Expose only validated public summaries in the React workspace.
+
+## Controlled Offline Evolution
+
+Online feedback is stored as bounded, content-free signals; it cannot rewrite production prompts, code, skills or medical facts. Candidate changes run in isolated Git worktrees and require paired evaluation, sealed-test attestation, slice-level non-regression, cost/latency gates and human approval before promotion. Optional official integrations are installed separately with `requirements-evolution.txt`.
 
 ## Open Source Status
 

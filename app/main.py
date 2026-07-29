@@ -1,95 +1,134 @@
-# app/main.py
-from fastapi import FastAPI, Request, Depends, HTTPException, status, Cookie
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
+from __future__ import annotations
+
+import asyncio
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from app.api.router import router as api_router
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+
+from app.api.management import router as management_router
+from app.api.router import router as legacy_router
+from app.api.runs import router as runs_router
+from app.api.websocket import router as websocket_router
 from app.auth.router import router as auth_router
-from app.db.database import create_db_and_tables
-from jose import JWTError, jwt
 from app.core.config import settings
-from app.auth.security import try_get_current_user
-from app.db.models import User
+from app.db.database import create_db_and_tables
+from app.evolution.continuous import ContinuousEvolutionController
+from app.observability.tracing import configure_tracing, safe_span
+from app.runtime.orchestrator import RunOrchestrator
+from app.runtime.store import RuntimeStore
+from app.services.provider_config import ProviderConfigStore
+from app.services.state import MemoryStore, SkillStore
+from app.tools.capabilities import CapabilityClients
 
-security = HTTPBearer(auto_error=False)
 
-def verify_token_optional(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """可选的token验证，不抛出异常"""
-    if not credentials:
-        return None
-    try:
-        payload = jwt.decode(credentials.credentials, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        user_id: int = payload.get("sub")
-        return user_id if user_id else None
-    except JWTError:
-        return None
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    errors = settings.startup_errors()
+    if settings.STRICT_STARTUP and settings.ENVIRONMENT != "test" and errors:
+        raise RuntimeError("启动前配置检查失败：" + "；".join(errors))
+    create_db_and_tables()
+    configure_tracing(settings)
+    store = RuntimeStore(settings)
+    clients = CapabilityClients(settings)
+    evolution_controller = ContinuousEvolutionController(settings)
+    memory_store = MemoryStore(settings, evolution_controller)
+    app.state.runtime_store = store
+    app.state.capability_clients = clients
+    app.state.memory_store = memory_store
+    app.state.skill_store = SkillStore(settings)
+    app.state.evolution_controller = evolution_controller
+    app.state.provider_config_store = ProviderConfigStore(store, settings)
+    app.state.orchestrator = RunOrchestrator(
+        store,
+        clients,
+        settings,
+        memory_store=memory_store,
+        provider_config_store=app.state.provider_config_store,
+        evolution_controller=evolution_controller,
+    )
+    await app.state.orchestrator.recover_interrupted()
+    yield
+    tasks = list(app.state.orchestrator._tasks.values())
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    await clients.close()
 
-app = FastAPI(title="灵瞳医疗AI系统", version="1.0.0")
 
-# 添加CORS中间件
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:8010", "http://127.0.0.1:8010"],  # 限制允许的域名
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],  # 限制允许的方法
-    allow_headers=["Authorization", "Content-Type"],  # 限制允许的头部
+app = FastAPI(
+    title="OphAgent-Pro 研究级眼科诊疗增强工作台",
+    version=settings.APP_VERSION,
+    description="AgentScope 驱动的研究级眼科诊疗增强系统；不替代医生诊断。",
+    lifespan=lifespan,
 )
 
-# 1. 挂载静态文件目录
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# 2. 配置Jinja2模板目录
-templates = Jinja2Templates(directory="app/templates")
 
-# 3. 包含API路由
-app.include_router(api_router, prefix="/api/v1")
-app.include_router(auth_router, tags=["Authentication"])
+@app.middleware("http")
+async def trace_http_request(request, call_next):
+    if (
+        request.method in {"POST", "PUT", "PATCH", "DELETE"}
+        and request.cookies.get("access_token")
+    ):
+        origin = request.headers.get("origin")
+        if origin:
+            request_origin = f"{request.url.scheme}://{request.url.netloc}"
+            allowed_origins = {request_origin, *settings.cors_origin_list}
+            if origin not in allowed_origins:
+                return JSONResponse(
+                    status_code=403,
+                    content={"detail": "跨站请求已被拒绝"},
+                )
+    with safe_span(
+        "http.request",
+        **{
+            "http.request.method": request.method,
+            "server.address": request.url.hostname or "",
+        },
+    ) as span:
+        response = await call_next(request)
+        span.set_attribute("http.response.status_code", response.status_code)
+        return response
 
-# 4. 创建根路由以提供前端页面
-@app.get("/", response_class=HTMLResponse)
-async def serve_login(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+static_dir = settings.project_root / "app" / "static"
+static_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-@app.get("/register", response_class=HTMLResponse)
-async def serve_register(request: Request):
-    return templates.TemplateResponse("register.html", {"request": request})
+app.include_router(legacy_router, prefix="/api/v1")
+app.include_router(runs_router, prefix="/api/v1")
+app.include_router(management_router, prefix="/api/v1")
+app.include_router(websocket_router, prefix="/ws")
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 
-@app.get("/app", response_class=HTMLResponse)
-async def serve_main_app(request: Request, access_token: str | None = Cookie(None)):
-    """
-    服务主应用页面。
-    如果用户未认证（通过cookie验证），则重定向到登录页面。
-    """
-    if access_token is None:
-        return RedirectResponse(url="/", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
-    
-    # 简单的token存在性检查
-    # 更强的验证可以解码并验证token
-    try:
-        # 去掉 "bearer " 前缀
-        token = access_token.split(" ")[1]
-        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        user_id: str = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except (JWTError, IndexError):
-        # 如果解码失败或格式不正确，重定向到登录
-        return RedirectResponse(url="/", status_code=status.HTTP_307_TEMPORARY_REDIRECT)
+frontend_dist = settings.project_root / "frontend" / "dist"
+if frontend_dist.is_dir():
+    app.mount("/assets", StaticFiles(directory=frontend_dist / "assets"), name="frontend-assets")
 
-    return templates.TemplateResponse("index.html", {"request": request})
 
-@app.get("/sw.js")
-async def service_worker():
-    """提供Service Worker文件"""
-    return FileResponse("app/static/sw.js", media_type="application/javascript")
+@app.get("/", include_in_schema=False)
+async def root():
+    index = frontend_dist / "index.html"
+    if index.is_file():
+        return FileResponse(index)
+    return RedirectResponse("/docs")
 
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时创建数据库表"""
-    create_db_and_tables()
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8010)
+@app.get("/{path:path}", include_in_schema=False)
+async def frontend_route(path: str):
+    if path.startswith(("api/", "auth/", "ws/", "static/")):
+        return RedirectResponse("/docs")
+    index = frontend_dist / "index.html"
+    if index.is_file():
+        return FileResponse(index)
+    return RedirectResponse("/docs")

@@ -1,0 +1,21 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "PIE", "UP", "RUF"]
+ignore = [
+    "B008",   # FastAPI dependency injection intentionally uses Depends() defaults.
+    "BLE001", # Runtime boundaries convert provider failures into durable run states.
+    "E712",   # SQLModel requires column == True expressions.
+    "F403",   # app.domain intentionally re-exports the domain model surface.
+    "RUF001", # Chinese user-facing text intentionally uses full-width punctuation.
+    "RUF002", # Chinese docstrings intentionally use full-width punctuation.
+    "RUF012", # Test-local mutable trackers are reset inside each test.
+]

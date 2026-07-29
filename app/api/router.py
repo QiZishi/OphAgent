@@ -1,600 +1,607 @@
-# app/api/router.py
-import json
-import inspect
-from typing import List, Optional
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
+"""Legacy conversation APIs retained during the v3 workspace migration."""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import binascii
+import hashlib
+import mimetypes
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session
+
+from app.api.dependencies import get_capability_clients, get_orchestrator, get_runtime_store
+from app.auth.security import get_current_user
+from app.core.config import settings
+from app.db.crud import (
+    count_project_conversations,
+    create_conversation,
+    create_message,
+    create_project,
+    delete_conversation,
+    delete_project,
+    get_conversation_by_id,
+    get_conversation_messages,
+    get_message_by_idempotency,
+    get_project,
+    get_user_conversations,
+    list_projects,
+    update_conversation_project,
+    update_conversation_title,
+    update_project,
+)
 from app.db.database import get_session
 from app.db.models import User
-from app.db.crud import (
-    create_conversation, get_user_conversations, get_conversation_by_id,
-    get_conversation_messages, update_conversation_title, delete_conversation
-)
-from app.auth.security import get_current_user
-from app.auth.schemas import UserResponse
-from app.services.chat_service import connection_manager
-from app.services.file_service import process_uploaded_file
-from pydantic import BaseModel
-
-# 导入所有智能体处理模块
-from app.agents import interactive_vqa, lesion_localizer, aux_diagnosis, report_generator, knowledge_base
+from app.domain.models import AttachmentRecord, RunInput, RunRecord
+from app.runtime.errors import CapabilityUnavailable
+from app.runtime.orchestrator import RunOrchestrator
+from app.runtime.store import RuntimeStore
+from app.tools.capabilities import CapabilityClients, SpeechRequest, SynthesisRequest
 
 router = APIRouter()
 
-# 将智能体名称映射到其处理函数
-agent_processors = {
-    "interactive_vqa": interactive_vqa.process_request,
-    "lesion_localizer": lesion_localizer.process_request,
-    "aux_diagnosis": aux_diagnosis.process_request,
-    "report_generator": report_generator.process_request,
-    "knowledge_base": knowledge_base.process_request,
-}
 
-# Pydantic模型
 class ConversationCreate(BaseModel):
-    title: str
-    agent_type: str
+    title: str = Field(default="新对话", min_length=1, max_length=100)
+    agent_type: str = "aux_diagnosis"
+    project_id: int | None = None
 
-class ConversationUpdate(BaseModel):
-    title: str
 
 class MessageResponse(BaseModel):
     id: int
     role: str
     content: str
-    thinking_content: Optional[str] = None
-    thinking_time_s: Optional[float] = None
+    file_path: str | None = None
     created_at: str
-    attachments: List[dict] = []
+
 
 class ConversationResponse(BaseModel):
     id: int
     title: str
     agent_type: str
     created_at: str
-    messages: List[MessageResponse] = []
+    pinned: bool = False
+    project_id: int | None = None
 
-# 消息处理API（替换WebSocket）
-@router.post("/conversations/{conversation_id}/messages")
-async def send_message(
-    conversation_id: int,
-    message: str = Form(...),
-    files: List[UploadFile] = File(default=[]),
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
-):
-    """发送消息到指定对话"""
-    print(f"[DEBUG] Send message API called - conversation_id: {conversation_id}")
-    print(f"[DEBUG] Message: {message[:200]}...")
-    print(f"[DEBUG] Files count: {len(files)}")
-    
-    # 验证对话存在且属于当前用户
-    conversation = get_conversation_by_id(session, conversation_id)
-    if not conversation or conversation.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    # 处理上传的文件
-    file_path = None
-    if files and len(files) > 0 and files[0].filename:
-        file_path = await process_uploaded_file(files[0], current_user.id)
-        print(f"[DEBUG] File uploaded to: {file_path}")
-    
-    try:
-        # 获取对话历史
-        messages = get_conversation_messages(session, conversation_id)
-        history = []
-        
-        for msg in messages:
-            history.append({
-                "role": msg.role,
-                "content": msg.content
-            })
-        
-        # 添加当前用户消息
-        history.append({
-            "role": "user",
-            "content": message
-        })
-        
-        print(f"[DEBUG] History length: {len(history)}")
-        
-        # 根据对话的agent_type选择处理器
-        processor = agent_processors.get(conversation.agent_type)
-        if not processor:
-            raise HTTPException(status_code=400, detail="Unknown agent type")
-        
-        print(f"[DEBUG] Using processor for agent_type: {conversation.agent_type}")
-        
-        # 调用处理器
-        response = processor(messages=history, uploaded_file_path=file_path)
-        print(f"[DEBUG] Processor response: {str(response)[:200]}...")
-        
-        # 保存用户消息到数据库
-        from app.db.models import Message, Attachment
-        user_message = Message(
-            conversation_id=conversation_id,
-            role="user",
-            content=message,
-            file_path=file_path
-        )
-        session.add(user_message)
-        session.commit()
-        session.refresh(user_message)
-        print(f"[DEBUG] User message saved with ID: {user_message.id}")
-        
-        # 如果有文件，创建附件记录
-        if file_path:
-            attachment = Attachment(
-                message_id=user_message.id,
-                file_path=file_path,
-                original_filename=files[0].filename
-            )
-            session.add(attachment)
-            session.commit()
-            session.refresh(attachment)
-            print(f"[DEBUG] Attachment saved with ID: {attachment.id}")
-        
-        # 保存AI响应到数据库
-        if response.get("type") == "complete_response":
-            payload = response.get("payload", {})
-            assistant_message = Message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=payload.get("answer_content", ""),
-                thinking_content=payload.get("thinking_content", ""),
-                thinking_time_s=payload.get("thinking_time_s", 0.0)
-            )
-        else:
-            # 处理其他响应格式
-            assistant_message = Message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=response.get("answer_content", response.get("content", "")),
-                thinking_content=response.get("thinking_content", ""),
-                thinking_time_s=response.get("thinking_time_s", 0.0)
-            )
-        
-        session.add(assistant_message)
-        session.commit()
-        session.refresh(assistant_message)
-        print(f"[DEBUG] Assistant message saved with ID: {assistant_message.id}")
-        
-        # 在响应中添加消息ID信息
-        if isinstance(response, dict):
-            response["message_id"] = assistant_message.id
-            if response.get("type") == "complete_response" and "payload" in response:
-                response["payload"]["message_id"] = assistant_message.id
-        
-        return response
-        
-    except Exception as e:
-        print(f"[DEBUG] Error in send_message: {type(e).__name__}: {e}")
-        import traceback
-        print(f"[DEBUG] Traceback: {traceback.format_exc()}")
-        # 回滚事务
-        session.rollback()
-        raise HTTPException(status_code=500, detail=f"处理消息时发生错误: {str(e)}")
 
-# 重新生成消息API
-@router.post("/conversations/{conversation_id}/messages/{message_id}/regenerate")
-async def regenerate_message(
-    conversation_id: int,
-    message_id: int,
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
-):
-    """重新生成指定的助手消息"""
-    print(f"[DEBUG] Regenerate message API called - conversation_id: {conversation_id}, message_id: {message_id}")
-    
-    # 验证对话存在且属于当前用户
-    conversation = get_conversation_by_id(session, conversation_id)
-    if not conversation or conversation.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    # 获取要重新生成的助手消息
-    from app.db.models import Message
-    assistant_message = session.get(Message, message_id)
-    if not assistant_message or assistant_message.conversation_id != conversation_id:
-        raise HTTPException(status_code=404, detail="Message not found")
-    
-    if assistant_message.role != "assistant":
-        raise HTTPException(status_code=400, detail="Only assistant messages can be regenerated")
-    
-    # 找到对应的用户消息（通常是前一条消息）
-    user_message = None
-    all_messages = get_conversation_messages(session, conversation_id)
-    
-    for i, msg in enumerate(all_messages):
-        if msg.id == message_id and i > 0:
-            user_message = all_messages[i - 1]
-            break
-    
-    if not user_message or user_message.role != "user":
-        raise HTTPException(status_code=400, detail="Cannot find corresponding user message")
-    
-    print(f"[DEBUG] Found user message: {user_message.id}")
-    print(f"[DEBUG] User message content: {user_message.content[:200]}...")
-    print(f"[DEBUG] User message attachments count: {len(user_message.attachments) if user_message.attachments else 0}")
-    
-    try:
-        # 获取对话历史（直到用户消息为止）
-        history = []
-        for msg in all_messages:
-            if msg.id == user_message.id:
-                break
-            history.append({
-                "role": msg.role,
-                "content": msg.content
-            })
-        
-        # 添加当前用户消息
-        history.append({
-            "role": "user", 
-            "content": user_message.content
-        })
-        
-        print(f"[DEBUG] History length: {len(history)}")
-        
-        # 确定文件路径（从用户消息的附件或file_path字段）
-        file_path = None
-        if user_message.attachments and len(user_message.attachments) > 0:
-            file_path = user_message.attachments[0].file_path
-            print(f"[DEBUG] Using file from attachments: {file_path}")
-        elif user_message.file_path:
-            file_path = user_message.file_path
-            print(f"[DEBUG] Using file from message file_path: {file_path}")
-        
-        # 根据对话的agent_type选择处理器
-        processor = agent_processors.get(conversation.agent_type)
-        if not processor:
-            raise HTTPException(status_code=400, detail="Unknown agent type")
-        
-        print(f"[DEBUG] Using processor for agent_type: {conversation.agent_type}")
-        print(f"[DEBUG] File path: {file_path}")
-        
-        # 调用处理器
-        response = processor(messages=history, uploaded_file_path=file_path)
-        print(f"[DEBUG] Processor response: {str(response)[:200]}...")
-        
-        # 更新现有的助手消息内容
-        if response.get("type") == "complete_response":
-            payload = response.get("payload", {})
-            assistant_message.content = payload.get("answer_content", "")
-            assistant_message.thinking_content = payload.get("thinking_content", "")
-            assistant_message.thinking_time_s = payload.get("thinking_time_s", 0.0)
-        else:
-            # 处理其他响应格式
-            assistant_message.content = response.get("answer_content", response.get("content", ""))
-            assistant_message.thinking_content = response.get("thinking_content", "")
-            assistant_message.thinking_time_s = response.get("thinking_time_s", 0.0)
-        
-        session.add(assistant_message)
-        session.commit()
-        session.refresh(assistant_message)
-        print(f"[DEBUG] Assistant message updated with ID: {assistant_message.id}")
-        
-        return response
-        
-    except Exception as e:
-        print(f"[DEBUG] Error in regenerate_message: {type(e).__name__}: {e}")
-        import traceback
-        print(f"[DEBUG] Traceback: {traceback.format_exc()}")
-        # 回滚事务
-        session.rollback()
-        raise HTTPException(status_code=500, detail=f"重新生成消息时发生错误: {str(e)}")
+class ConversationDetailResponse(ConversationResponse):
+    messages: list[MessageResponse] = Field(default_factory=list)
+    runs: list[RunRecord] = Field(default_factory=list)
 
-# WebSocket端点
-@router.websocket("/ws/{conversation_id}")
-async def websocket_endpoint(websocket: WebSocket, conversation_id: int):
-    """WebSocket聊天端点"""
-    print(f"[DEBUG] WebSocket connection established for conversation {conversation_id}")
-    await connection_manager.connect(websocket, conversation_id)
-    try:
-        while True:
-            data = await websocket.receive_text()
-            print(f"[DEBUG] Received WebSocket message: {data[:200]}...")
-            
-            # 1. 解析前端发来的消息
-            # 消息格式: {"agent_type": "...", "history": [...], "file_path": "..."}
-            try:
-                request_data = json.loads(data)
-                agent_type = request_data.get("agent_type")
-                history = request_data.get("history", [])
-                file_path = request_data.get("file_path")  # 文件已在HTTP端点上传并保存
-                
-                print(f"[DEBUG] Parsed request - agent_type: {agent_type}, history length: {len(history)}, file_path: {file_path}")
-            except json.JSONDecodeError as e:
-                print(f"[DEBUG] JSON decode error: {e}")
-                error_msg = json.dumps({"type": "error", "payload": {"message": "消息格式错误"}})
-                await connection_manager.send_personal_message(error_msg, websocket)
-                continue
 
-            # 2. 根据 agent_type 选择处理器
-            processor = agent_processors.get(agent_type)
-            if not processor:
-                print(f"[DEBUG] Unknown agent type: {agent_type}")
-                error_msg = json.dumps({"type": "error", "payload": {"message": "未知的智能体类型"}})
-                await connection_manager.send_personal_message(error_msg, websocket)
-                continue
+class ConversationUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=100)
+    pinned: bool | None = None
+    project_id: int | None = None
 
-            print(f"[DEBUG] Found processor for agent_type: {agent_type}")
-            
-            # 3. 调用处理器并返回结果
-            # 所有处理器现在都是同步函数，返回完整的响应
-            try:
-                print(f"[DEBUG] Calling processor...")
-                response = processor(messages=history, uploaded_file_path=file_path)
-                print(f"[DEBUG] Processor returned response: {str(response)[:200]}...")
-                await connection_manager.send_personal_message(json.dumps(response), websocket)
-                print(f"[DEBUG] Response sent to WebSocket")
-            except Exception as proc_e:
-                print(f"[DEBUG] Error in processor: {type(proc_e).__name__}: {proc_e}")
-                import traceback
-                print(f"[DEBUG] Processor traceback: {traceback.format_exc()}")
-                error_msg = json.dumps({"type": "error", "payload": {"message": f"处理器错误: {str(proc_e)}"}})
-                await connection_manager.send_personal_message(error_msg, websocket)
 
-            # 4. 发送流结束信号
-            completion_signal = json.dumps({"type": "status_update", "payload": {"status": "complete"}})
-            await connection_manager.send_personal_message(completion_signal, websocket)
+class ConversationMessageCreate(BaseModel):
+    content: str = Field(min_length=1, max_length=20_000)
+    attachment_ids: list[str] = Field(default_factory=list)
+    requested_plugins: list[str] = Field(default_factory=list)
+    requested_skills: list[str] = Field(default_factory=list)
+    mode: str = "auto"
+    idempotency_key: str | None = Field(default=None, max_length=128)
 
-    except WebSocketDisconnect:
-        connection_manager.disconnect(conversation_id)
-    except Exception as e:
-        # 统一异常处理
-        error_msg = json.dumps({"type": "error", "payload": {"message": f"服务器内部错误: {str(e)}"}})
-        await connection_manager.send_personal_message(error_msg, websocket)
-        connection_manager.disconnect(conversation_id)
 
-# 用户信息端点
-@router.get("/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
-    """获取当前用户信息"""
-    return UserResponse(
-        id=current_user.id,
-        username=current_user.username,
-        created_at=current_user.created_at.isoformat()
+class ConversationMessageRunResponse(BaseModel):
+    message: MessageResponse
+    run: RunRecord
+
+
+class SpeechSynthesisCreate(BaseModel):
+    text: str = Field(min_length=1, max_length=600)
+    voice: str | None = Field(default=None, min_length=1, max_length=64)
+
+
+class PaginationResponse(BaseModel):
+    items: list[ConversationResponse]
+    total: int
+    skip: int
+    limit: int
+
+
+class ProjectCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    description: str = Field(default="", max_length=500)
+
+
+class ProjectUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=80)
+    description: str | None = Field(default=None, max_length=500)
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+
+
+class ProjectResponse(BaseModel):
+    id: int
+    name: str
+    description: str
+    color: str
+    conversation_count: int
+    created_at: str
+    updated_at: str
+
+
+def _project_response(project, session: Session) -> ProjectResponse:
+    return ProjectResponse(
+        id=int(project.id),
+        name=project.name,
+        description=project.description,
+        color=project.color,
+        conversation_count=count_project_conversations(session, int(project.id)),
+        created_at=project.created_at.isoformat(),
+        updated_at=project.updated_at.isoformat(),
     )
 
-# 对话管理API
-@router.post("/conversations", response_model=ConversationResponse)
-async def create_new_conversation(
-    conversation_data: ConversationCreate,
+
+@router.get("/projects", response_model=list[ProjectResponse])
+async def get_projects(
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
-    """创建新对话"""
-    conversation = create_conversation(
-        session, 
-        conversation_data.title, 
-        current_user.id, 
-        conversation_data.agent_type
-    )
-    
-    return ConversationResponse(
-        id=conversation.id,
-        title=conversation.title,
-        agent_type=conversation.agent_type,
-        created_at=conversation.created_at.isoformat(),
-        messages=[]
+    return [_project_response(item, session) for item in list_projects(session, int(current_user.id))]
+
+
+@router.post("/projects", response_model=ProjectResponse, status_code=201)
+async def create_workspace_project(
+    payload: ProjectCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    return _project_response(
+        create_project(session, int(current_user.id), payload.name, payload.description),
+        session,
     )
 
-@router.get("/conversations", response_model=List[ConversationResponse])
-async def get_conversations(
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
-):
-    """获取用户的所有对话"""
-    conversations = get_user_conversations(session, current_user.id)
-    
-    result = []
-    for conv in conversations:
-        messages = get_conversation_messages(session, conv.id)
-        message_responses = []
-        
-        for msg in messages:
-            attachments = []
-            if msg.attachments:
-                attachments = [
-                    {
-                        "file_path": att.file_path,
-                        "original_filename": att.original_filename
-                    }
-                    for att in msg.attachments
-                ]
-            
-            message_responses.append(MessageResponse(
-                id=msg.id,
-                role=msg.role,
-                content=msg.content,
-                thinking_content=msg.thinking_content,
-                thinking_time_s=msg.thinking_time_s,
-                created_at=msg.created_at.isoformat(),
-                attachments=attachments
-            ))
-        
-        result.append(ConversationResponse(
-            id=conv.id,
-            title=conv.title,
-            agent_type=conv.agent_type,
-            created_at=conv.created_at.isoformat(),
-            messages=message_responses
-        ))
-    
-    return result
 
-@router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
-async def get_conversation(
-    conversation_id: int,
+@router.patch("/projects/{project_id}", response_model=ProjectResponse)
+async def update_workspace_project(
+    project_id: int,
+    payload: ProjectUpdate,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
-    """获取特定对话"""
-    conversation = get_conversation_by_id(session, conversation_id)
-    
-    if not conversation or conversation.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    messages = get_conversation_messages(session, conversation_id)
-    message_responses = []
-    
-    for msg in messages:
-        attachments = []
-        if msg.attachments:
-            attachments = [
-                {
-                    "file_path": att.file_path,
-                    "original_filename": att.original_filename
-                }
-                for att in msg.attachments
-            ]
-        
-        message_responses.append(MessageResponse(
-            id=msg.id,
-            role=msg.role,
-            content=msg.content,
-            thinking_content=msg.thinking_content,
-            thinking_time_s=msg.thinking_time_s,
-            created_at=msg.created_at.isoformat(),
-            attachments=attachments
-        ))
-    
-    return ConversationResponse(
-        id=conversation.id,
-        title=conversation.title,
-        agent_type=conversation.agent_type,
-        created_at=conversation.created_at.isoformat(),
-        messages=message_responses
-    )
+    project = get_project(session, project_id, int(current_user.id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return _project_response(update_project(session, project, payload.model_dump(exclude_none=True)), session)
 
-@router.put("/conversations/{conversation_id}", response_model=ConversationResponse)
-async def update_conversation(
-    conversation_id: int,
-    conversation_data: ConversationUpdate,
+
+@router.delete("/projects/{project_id}", status_code=204)
+async def delete_workspace_project(
+    project_id: int,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
+    session: Session = Depends(get_session),
 ):
-    """更新对话标题"""
-    conversation = get_conversation_by_id(session, conversation_id)
-    
-    if not conversation or conversation.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    updated_conversation = update_conversation_title(session, conversation_id, conversation_data.title)
-    
-    messages = get_conversation_messages(session, conversation_id)
-    message_responses = []
-    
-    for msg in messages:
-        attachments = []
-        if msg.attachments:
-            attachments = [
-                {
-                    "file_path": att.file_path,
-                    "original_filename": att.original_filename
-                }
-                for att in msg.attachments
-            ]
-        
-        message_responses.append(MessageResponse(
-            id=msg.id,
-            role=msg.role,
-            content=msg.content,
-            thinking_content=msg.thinking_content,
-            thinking_time_s=msg.thinking_time_s,
-            created_at=msg.created_at.isoformat(),
-            attachments=attachments
-        ))
-    
-    return ConversationResponse(
-        id=updated_conversation.id,
-        title=updated_conversation.title,
-        agent_type=updated_conversation.agent_type,
-        created_at=updated_conversation.created_at.isoformat(),
-        messages=message_responses
-    )
+    project = get_project(session, project_id, int(current_user.id))
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    delete_project(session, project)
 
-@router.delete("/conversations/{conversation_id}")
-async def delete_conversation_endpoint(
-    conversation_id: int,
-    current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_session)
-):
-    """删除对话"""
-    conversation = get_conversation_by_id(session, conversation_id)
-    
-    if not conversation or conversation.user_id != current_user.id:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    success = delete_conversation(session, conversation_id)
-    
-    if success:
-        return {"message": "Conversation deleted successfully"}
-    else:
-        raise HTTPException(status_code=500, detail="Failed to delete conversation")
 
-# 文件上传API
+@router.get("/health")
+async def health_check():
+    errors = settings.startup_errors()
+    return {
+        "status": "ok" if not errors else "degraded",
+        "service": settings.APP_NAME,
+        "version": settings.APP_VERSION,
+        "configuration_errors": errors,
+    }
+
+
 @router.post("/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    store: RuntimeStore = Depends(get_runtime_store),
 ):
-    """上传文件"""
     if not file.filename:
-        raise HTTPException(status_code=400, detail="No file selected")
-    
-    file_path = await process_uploaded_file(file, current_user.id)
-    
-    if file_path:
-        return {"file_path": file_path, "filename": file.filename}
+        raise HTTPException(status_code=400, detail="未选择文件")
+    allowed = {
+        ".jpg", ".jpeg", ".png", ".webp",
+        ".pdf", ".txt", ".md",
+        ".wav", ".mp3", ".m4a",
+    }
+    extension = Path(file.filename).suffix.lower()
+    if extension not in allowed:
+        raise HTTPException(status_code=400, detail="不支持的文件类型")
+    content = await file.read(settings.MAX_UPLOAD_BYTES + 1)
+    if len(content) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="文件超过上传大小限制")
+    upload_dir = settings.resolve_path(settings.UPLOAD_DIR)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = f"{uuid4().hex}{extension}"
+    target = upload_dir / safe_name
+    await asyncio.to_thread(target.write_bytes, content)
+    if extension in {".jpg", ".jpeg", ".png", ".webp"}:
+        kind = "image"
+    elif extension in {".wav", ".mp3", ".m4a"}:
+        kind = "audio"
     else:
-        raise HTTPException(status_code=400, detail="Unsupported file type or processing failed")
-
-# 获取智能体信息API
-@router.get("/agents")
-async def get_agents():
-    """获取所有智能体信息"""
-    from app.agents import (
-        interactive_vqa, lesion_localizer, aux_diagnosis, 
-        report_generator, knowledge_base
+        kind = "document"
+    record = AttachmentRecord(
+        user_id=int(current_user.id),
+        original_filename=Path(file.filename).name,
+        stored_path=str(target.relative_to(settings.project_root)),
+        mime_type=file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream",
+        size=len(content),
+        checksum=hashlib.sha256(content).hexdigest(),
+        kind=kind,
     )
-    
-    agents = [
-        {
-            "type": interactive_vqa.get_agent_type(),
-            "name": interactive_vqa.get_display_name(),
-            "description": interactive_vqa.get_description(),
-            "welcome_message": interactive_vqa.get_welcome_message(),
-            "icon": "💬"
-        },
-        {
-            "type": lesion_localizer.get_agent_type(),
-            "name": lesion_localizer.get_display_name(),
-            "description": lesion_localizer.get_description(),
-            "welcome_message": lesion_localizer.get_welcome_message(),
-            "icon": "🎯"
-        },
-        {
-            "type": aux_diagnosis.get_agent_type(),
-            "name": aux_diagnosis.get_display_name(),
-            "description": aux_diagnosis.get_description(),
-            "welcome_message": aux_diagnosis.get_welcome_message(),
-            "icon": "🩺"
-        },
-        {
-            "type": report_generator.get_agent_type(),
-            "name": report_generator.get_display_name(),
-            "description": report_generator.get_description(),
-            "welcome_message": report_generator.get_welcome_message(),
-            "icon": "📄"
-        },
-        {
-            "type": knowledge_base.get_agent_type(),
-            "name": knowledge_base.get_display_name(),
-            "description": knowledge_base.get_description(),
-            "welcome_message": knowledge_base.get_welcome_message(),
-            "icon": "🧠"
+    await store.save_attachment(record)
+    return {
+        "id": record.id,
+        "attachment_id": record.id,
+        "kind": record.kind,
+        "mime_type": record.mime_type,
+        "filename": record.original_filename,
+        "size": record.size,
+        "status": "uploaded",
+        "url": f"/api/v1/attachments/{record.id}",
+    }
+
+
+@router.post("/audio/transcriptions")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    clients: CapabilityClients = Depends(get_capability_clients),
+):
+    """Transcribe one private recording and remove the temporary audio afterwards."""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="未选择音频")
+    suffix = Path(file.filename).suffix.lower() or ".webm"
+    if suffix not in {".wav", ".mp3", ".m4a", ".webm", ".ogg"}:
+        raise HTTPException(status_code=415, detail="不支持的录音格式")
+    content = await file.read(settings.MAX_UPLOAD_BYTES + 1)
+    if len(content) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="录音超过上传大小限制")
+    target_dir = settings.resolve_path(settings.UPLOAD_DIR) / "voice-temp" / str(current_user.id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{uuid4().hex}{suffix}"
+    await asyncio.to_thread(target.write_bytes, content)
+    try:
+        result = await clients.transcribe(SpeechRequest(path=str(target)))
+        data = result.data
+        nested = data.get("result")
+        text = str(
+            data.get("text")
+            or data.get("transcript")
+            or (nested.get("text") if isinstance(nested, dict) else "")
+            or ""
+        ).strip()
+        if not text:
+            raise HTTPException(status_code=502, detail="ASR 未返回可用转写文本")
+        return {
+            "text": text,
+            "language": data.get("language"),
+            "duration_seconds": data.get("duration") or data.get("duration_seconds"),
         }
-    ]
-    
-    return {"agents": agents}
+    except CapabilityUnavailable as exc:
+        raise HTTPException(status_code=503, detail=exc.detail) from exc
+    finally:
+        if target.is_file():
+            await asyncio.to_thread(target.unlink)
+
+
+@router.post("/audio/speech")
+async def synthesize_speech(
+    payload: SpeechSynthesisCreate,
+    current_user: User = Depends(get_current_user),
+    clients: CapabilityClients = Depends(get_capability_clients),
+):
+    """Synthesize one authenticated response without persisting clinical text or audio."""
+    del current_user
+    try:
+        result = await clients.synthesize_speech(
+            SynthesisRequest(text=payload.text, voice=payload.voice)
+        )
+        encoded = str(result.data.get("audio_base64") or "")
+        if not encoded:
+            raise HTTPException(status_code=502, detail="TTS 未返回可播放音频")
+        try:
+            audio = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error) as exc:
+            raise HTTPException(status_code=502, detail="TTS 返回了无效音频") from exc
+        mime_type = str(result.data.get("mime_type") or "audio/mpeg")
+        if not mime_type.startswith("audio/"):
+            mime_type = "audio/mpeg"
+        return Response(
+            content=audio,
+            media_type=mime_type,
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
+    except CapabilityUnavailable as exc:
+        raise HTTPException(status_code=503, detail=exc.detail) from exc
+
+
+@router.get("/attachments")
+async def list_attachments(
+    current_user: User = Depends(get_current_user),
+    store: RuntimeStore = Depends(get_runtime_store),
+):
+    return await store.list_attachments(int(current_user.id))
+
+
+@router.get("/attachments/{attachment_id}")
+async def download_attachment(
+    attachment_id: str,
+    current_user: User = Depends(get_current_user),
+    store: RuntimeStore = Depends(get_runtime_store),
+):
+    record = await store.get_attachment(attachment_id)
+    if record is None or record.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    path = settings.resolve_path(record.stored_path)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Attachment file not found")
+    return FileResponse(path, media_type=record.mime_type, filename=record.original_filename)
+
+
+@router.delete("/attachments/{attachment_id}", status_code=204)
+async def delete_attachment(
+    attachment_id: str,
+    current_user: User = Depends(get_current_user),
+    store: RuntimeStore = Depends(get_runtime_store),
+):
+    if not await store.delete_attachment(attachment_id, int(current_user.id)):
+        raise HTTPException(status_code=404, detail="Attachment not found")
+
+
+@router.post("/diagnose", status_code=410)
+async def legacy_diagnose(current_user: User = Depends(get_current_user)):
+    raise HTTPException(
+        status_code=410,
+        detail="旧同步诊断接口已移除；请使用 POST /api/v1/runs 并订阅 /events。",
+    )
+
+
+@router.get("/conversations", response_model=PaginationResponse)
+async def list_conversations(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    conversations, total = get_user_conversations(session, int(current_user.id), skip=skip, limit=limit)
+    return PaginationResponse(
+        items=[
+            ConversationResponse(
+                id=int(conversation.id),
+                title=conversation.title,
+                agent_type=conversation.agent_type,
+                created_at=conversation.created_at.isoformat(),
+                pinned=conversation.pinned,
+                project_id=conversation.project_id,
+            )
+            for conversation in conversations
+        ],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
+
+
+@router.post("/conversations", response_model=ConversationDetailResponse)
+async def create_new_conversation(
+    payload: ConversationCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    if payload.project_id is not None and get_project(
+        session,
+        payload.project_id,
+        int(current_user.id),
+    ) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    conversation = create_conversation(
+        session,
+        title=payload.title,
+        user_id=int(current_user.id),
+        agent_type=payload.agent_type,
+        project_id=payload.project_id,
+    )
+    return ConversationDetailResponse(
+        id=int(conversation.id),
+        title=conversation.title,
+        agent_type=conversation.agent_type,
+        created_at=conversation.created_at.isoformat(),
+        pinned=conversation.pinned,
+        project_id=conversation.project_id,
+    )
+
+
+@router.get("/conversations/{conversation_id}", response_model=ConversationDetailResponse)
+async def get_conversation(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    store: RuntimeStore = Depends(get_runtime_store),
+):
+    conversation = get_conversation_by_id(session, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    messages = get_conversation_messages(session, conversation_id)
+    return ConversationDetailResponse(
+        id=int(conversation.id),
+        title=conversation.title,
+        agent_type=conversation.agent_type,
+        created_at=conversation.created_at.isoformat(),
+        pinned=conversation.pinned,
+        project_id=conversation.project_id,
+        messages=[
+            MessageResponse(
+                id=int(message.id),
+                role=message.role,
+                content=message.content,
+                file_path=message.file_path,
+                created_at=message.created_at.isoformat(),
+            )
+            for message in messages
+        ],
+        runs=[
+            run
+            for run in await store.list_runs(int(current_user.id), limit=100)
+            if run.input.conversation_id == conversation_id
+        ],
+    )
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationResponse)
+async def update_conversation(
+    conversation_id: int,
+    payload: ConversationUpdate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    conversation = get_conversation_by_id(session, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if payload.title is not None:
+        conversation = update_conversation_title(session, conversation_id, payload.title) or conversation
+    if payload.pinned is not None:
+        conversation.pinned = payload.pinned
+        session.add(conversation)
+        session.commit()
+        session.refresh(conversation)
+    if "project_id" in payload.model_fields_set:
+        if payload.project_id is not None and get_project(
+            session,
+            payload.project_id,
+            int(current_user.id),
+        ) is None:
+            raise HTTPException(status_code=404, detail="Project not found")
+        conversation = update_conversation_project(
+            session,
+            conversation,
+            payload.project_id,
+        )
+    return ConversationResponse(
+        id=int(conversation.id),
+        title=conversation.title,
+        agent_type=conversation.agent_type,
+        created_at=conversation.created_at.isoformat(),
+        pinned=conversation.pinned,
+        project_id=conversation.project_id,
+    )
+
+
+@router.post(
+    "/conversations/{conversation_id}/messages",
+    response_model=ConversationMessageRunResponse,
+    status_code=202,
+)
+async def create_conversation_message(
+    conversation_id: int,
+    payload: ConversationMessageCreate,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    orchestrator: RunOrchestrator = Depends(get_orchestrator),
+    store: RuntimeStore = Depends(get_runtime_store),
+):
+    conversation = get_conversation_by_id(session, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    if payload.idempotency_key:
+        existing_message = get_message_by_idempotency(
+            session,
+            conversation_id,
+            payload.idempotency_key,
+        )
+        existing_run = await store.find_run_by_idempotency(
+            int(current_user.id),
+            payload.idempotency_key,
+        )
+        if (
+            existing_message is not None
+            and existing_message.conversation_id == conversation_id
+            and existing_run is not None
+        ):
+            return ConversationMessageRunResponse(
+                message=MessageResponse(
+                    id=int(existing_message.id),
+                    role=existing_message.role,
+                    content=existing_message.content,
+                    file_path=existing_message.file_path,
+                    created_at=existing_message.created_at.isoformat(),
+                ),
+                run=existing_run,
+            )
+    plugin_id = payload.requested_plugins[0] if payload.requested_plugins else "core"
+    try:
+        run = await orchestrator.create(
+            int(current_user.id),
+            RunInput(
+                query=payload.content,
+                plugin_id=plugin_id,
+                conversation_id=conversation_id,
+                attachment_ids=payload.attachment_ids,
+                requested_plugins=payload.requested_plugins,
+                requested_skills=payload.requested_skills,
+                mode=payload.mode,
+                idempotency_key=payload.idempotency_key,
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        message = create_message(
+            session,
+            conversation_id,
+            "user",
+            payload.content,
+            idempotency_key=payload.idempotency_key,
+        )
+    except IntegrityError:
+        session.rollback()
+        if not payload.idempotency_key:
+            raise
+        message = get_message_by_idempotency(
+            session,
+            conversation_id,
+            payload.idempotency_key,
+        )
+        if message is None:
+            raise
+    await store.bind_attachments(
+        payload.attachment_ids,
+        int(current_user.id),
+        conversation_id,
+        int(message.id),
+    )
+    return ConversationMessageRunResponse(
+        message=MessageResponse(
+            id=int(message.id),
+            role=message.role,
+            content=message.content,
+            file_path=message.file_path,
+            created_at=message.created_at.isoformat(),
+        ),
+        run=run,
+    )
+
+
+@router.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conversation_endpoint(
+    conversation_id: int,
+    current_user: User = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    store: RuntimeStore = Depends(get_runtime_store),
+    orchestrator: RunOrchestrator = Depends(get_orchestrator),
+):
+    conversation = get_conversation_by_id(session, conversation_id)
+    if not conversation or conversation.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    for run in await store.list_runs(int(current_user.id), limit=10_000):
+        if run.input.conversation_id == conversation_id:
+            await orchestrator.cancel(run.id, int(current_user.id))
+    if not delete_conversation(session, conversation_id):
+        raise HTTPException(status_code=500, detail="删除会话失败")
+    await store.delete_conversation_resources(int(current_user.id), conversation_id)
