@@ -32,6 +32,8 @@
 
 ## 新闻动态
 
+- **2026.07.29** 🚀 **OphAgent 2.0 发布**：完成可持久化 Agent 运行时、类型化 DAG 编排、SSE 流式响应、证据治理、多模态插件、项目化工作区与医疗安全门禁升级。
+
 - **2026.07.07** 🎉 论文 “OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum Reinforcement Learning” 被 **WAICA 2026** 接收！
   - 📖 会议官网：<https://waica2026.worldaic.com.cn/>
 
@@ -41,7 +43,7 @@
 - **2025.11.28** 📊 高质量眼科多模态推理数据集 **OphReason-Vision** 部分子集已在 ModelScope 平台正式开源发布！
   - 🔗 数据集链接：<https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision>
 
-- **2025.11.23** 🎬 “灵瞳”眼科智慧诊疗系统初代五入口版本实机演示视频在 B 站发布。当前 OphAgent 已在此基础上完成全面架构重构。
+- **2025.11.23** 🎬 “灵瞳”眼科智慧诊疗系统实机演示视频在 B 站发布。
   - 🎥 视频链接：<https://www.bilibili.com/video/BV1g4UTBZEEm/>
 
 ## 项目背景
@@ -70,11 +72,11 @@ Intern-S1 生成覆盖病灶定位、多模态诊断和知识问答的多维指�
 
 > 视觉体征识别 → 知识检索 → 病理分析 → 临床决策
 
-质量控制采用基于 Intern-S1 的 LVLM-as-a-Judge，阈值 $\tau=0.7$ 由 500 条专家审核的试点样本确定，以最大化 F1。评判维度包括医学正确性、推理一致性、步骤完整性和清晰度，并识别虚构影像发现、疾病分类错误和逻辑不一致等问题。
+质量控制采用基于 Intern-S1 的 LVLM-as-a-Judge，阈值 τ = 0.7 由 500 条专家审核的试点样本确定，以最大化 F1。评判维度包括医学正确性、推理一致性、步骤完整性和清晰度，并识别虚构影像发现、疾病分类错误和逻辑不一致等问题。
 
 ### 3. 专家协作优化
 
-三名认证眼科医生审核被标记为困难的 18% 样本，评估者间一致性达到 Cohen's $\kappa=0.82$，分歧通过讨论解决直至达成共识。样本难度依据基座模型困惑度划分，使训练课程能够从较简单的视觉感知逐步过渡到长文本临床推理。数据同时通过感知哈希、来源标识符交叉比对和人工来源审计降低与外部评测基准的数据污染风险。
+三名认证眼科医生审核被标记为困难的 18% 样本，评估者间一致性达到 Cohen's κ = 0.82，分歧通过讨论解决直至达成共识。样本难度依据基座模型困惑度划分，使训练课程能够从较简单的视觉感知逐步过渡到长文本临床推理。数据同时通过感知哈希、来源标识符交叉比对和人工来源审计降低与外部评测基准的数据污染风险。
 
 | 划分 | 记录数 | 用途 |
 |---|---:|---|
@@ -91,7 +93,7 @@ OphVLM-R1 是以 InternVL3.5-2B 为基座的 2B 参数模型。其轻量化规�
 
 ### 阶段一：LoRA 监督微调
 
-使用 3,418 条冷启动样本，通过 Low-Rank Adaptation（LoRA）注入广泛的眼科领域知识，并将权重更新约束为低秩分解。适配器在 $W_q$、$W_k$、$W_v$ 和 $W_o$ 注意力投影上使用 rank $r=64$、scaling $\alpha=128$；学习率从 $1\times10^{-4}$ 开始并采用余弦退火，批次大小为 32，共训练 3 epochs，可训练参数约占总参数的 0.5%。
+使用 3,418 条冷启动样本，通过 Low-Rank Adaptation（LoRA）注入广泛的眼科领域知识，并将权重更新约束为低秩分解。适配器在 W<sub>q</sub>、W<sub>k</sub>、W<sub>v</sub> 和 W<sub>o</sub> 注意力投影上使用 rank r = 64、scaling α = 128；学习率从 1 × 10<sup>−4</sup> 开始并采用余弦退火，批次大小为 32，共训练 3 epochs，可训练参数约占总参数的 0.5%。
 
 ### 阶段二：课程强化学习
 
@@ -102,11 +104,11 @@ OphVLM-R1 是以 InternVL3.5-2B 为基座的 2B 参数模型。其轻量化规�
 3. 报告生成。
 4. 知识问答。
 
-Group Sequence-level Policy Optimization（GSPO）通过在序列级计算重要性比率，缓解长推理链中 token-level 策略比率带来的训练不稳定。每个课程阶段优化规则可验证奖励与 Intern-S1-mini judge reward 的加权组合，权重为 $\lambda_1=0.6$ 和 $\lambda_2=0.4$。训练配置为 $G=8$、$\varepsilon=0.2$、学习率 $5\times10^{-6}$、$\beta_{\mathrm{KL}}=0.04$，每阶段训练 2 epochs。
+Group Sequence-level Policy Optimization（GSPO）通过在序列级计算重要性比率，缓解长推理链中 token-level 策略比率带来的训练不稳定。每个课程阶段优化规则可验证奖励与 Intern-S1-mini judge reward 的加权组合，权重为 λ<sub>1</sub> = 0.6 和 λ<sub>2</sub> = 0.4。训练配置为 G = 8、ε = 0.2、学习率 5 × 10<sup>−6</sup>、β<sub>KL</sub> = 0.04，每阶段训练 2 epochs。
 
 ### 困难样本动态回溯
 
-on-policy 重采样机制跟踪最近 $k=5$ 轮中持续低于奖励阈值的 prompt，并依据连续失败次数提高困难样本的采样概率。系统仅保存 prompt 索引与失败统计，确保每次重新访问困难 prompt 时生成新的 on-policy rollout。重采样比例不超过单个 batch 的 30%，以维持对已掌握样本的覆盖。
+on-policy 重采样机制跟踪最近 k = 5 轮中持续低于奖励阈值的 prompt，并依据连续失败次数提高困难样本的采样概率。系统仅保存 prompt 索引与失败统计，确保每次重新访问困难 prompt 时生成新的 on-policy rollout。重采样比例不超过单个 batch 的 30%，以维持对已掌握样本的覆盖。
 
 ## 模型实验性能
 
@@ -122,46 +124,180 @@ on-policy 重采样机制跟踪最近 $k=5$ 轮中持续低于奖励阈值的 pr
 
 在论文报告的对比中，OphVLM-R1 在域外 OmniMedVQA-Eye 和 Fundus-MMBench 上分别达到 88.24% 和 42.58%；56.41% 的参考平均值高于 InternVL3.5-4B 的 51.95% 和 OphthaReason-Qwen-3B 的 54.11%。在 Omni-Eye 消融实验中，仅 SFT、一次性 RL、将 GSPO 替换为 token-level GRPO、移除困难样本回溯分别下降 26.21、10.10、3.72 和 2.12 个百分点。所有结果来自单次运行，未提供置信区间或显著性检验；与 off-the-shelf 7B/8B 模型的比较还受到训练数据暴露与参数规模差异影响，需要谨慎解读。
 
-## OphAgent 设计架构
+## OphAgent
 
-OphAgent-Pro 3.0 不再是五个彼此隔离的聊天接口，而是一套有状态 Agent 运行时：每个请求都会先经过分诊与路由，再进入有预算的执行档位，以可恢复 Run 的形式持久化，并通过可重放事件交付给 React 工作台。
+**为你整理眼科问题，随上下文持续工作。**
 
-```mermaid
-flowchart LR
-    UI["React 工作台<br/>对话 · 文件 · 项目 · 记忆 · 技能"] --> API["FastAPI<br/>鉴权 · REST · SSE · WebSocket"]
-    API --> GATE["确定性红旗门禁<br/>附件归属 · 运行预算"]
-    GATE --> ROUTER["意图路由<br/>Quick · Standard · Deep"]
-    ROUTER --> DAG["类型化 DAG 规划<br/>并行节点 + 显式依赖"]
-    DAG --> AGENTS["AgentScope ReAct 角色<br/>监督 · 临床 · 证据 · 专科 · 审查 · 报告"]
-    AGENTS --> TOOLS["真实外部能力<br/>多模态 · 搜索 · MinerU · ASR/TTS"]
-    TOOLS --> STATE["ClinicalState + 证据账本<br/>产物 · 已确认记忆"]
-    STATE --> STORE["SQLite WAL 运行时存储<br/>Run · 事件 · 附件 · 上下文快照"]
-    STORE --> API
+OphAgent 是面向眼科研究与临床辅助场景的全栈 Agent 工作台——可部署在自己的设备或服务器上，通过技能与专业插件扩展能力，并在同一条对话中组织影像、文档、指南证据和报告。
+
+| | |
+|---|---|
+| **持续运行** | Conversation、Run、事件、附件和上下文快照完整持久化；刷新、重连和服务恢复都有清晰状态。 |
+| **证据优先** | 指南优先混合检索、来源生命周期、引用账本和段落级主张检查，让回答能够回到来源复核。 |
+| **安全内建** | 红旗规则、附件归属、幂等控制、预算、取消、坐标校验和来源门禁贯穿整个执行链。 |
+| **多模态并行** | 眼底照、OCT、眼前节影像、PDF、文本与音频进入类型化 DAG，由相关节点并行处理。 |
+| **易于扩展** | 三个专业插件、受控 `SKILL.md`、记忆、OpenAI-compatible Provider 与外部工具按统一契约组合。 |
+| **随处可用** | 响应式 React 工作台覆盖桌面端和移动端，项目、文件、知识、技能和设置共享同一工作空间。 |
+
+<details>
+<summary><b>OphAgent 可以做什么</b></summary>
+
+<br>
+
+- **眼科问答与指南检索**：连续追问、自动路由、来源引用和证据回看。
+- **多模态资料复核**：上传眼底照、OCT、眼前节影像、检查文档和音频。
+- **专业插件工作流**：按需组合病灶定位、辅助评估和报告生成。
+- **项目化资料管理**：把对话、私人文件、生成产物和诊疗目标归集到同一项目。
+- **可编辑报告**：在文档工作区继续编辑，并导出 MD、PDF、DOCX 或 JPG。
+- **个性化能力**：管理已确认记忆、受控技能、Provider 配置和知识来源。
+
+</details>
+
+---
+
+## OphAgent 章节导航
+
+- [快速开始](#快速开始)
+- [产品能力](#产品能力)
+- [设计架构](#设计架构)
+- [执行档位](#执行档位)
+- [医疗安全与可靠性](#医疗安全与可靠性)
+- [技术栈](#技术栈)
+- [项目结构](#项目结构)
+- [知识语料](#知识语料)
+- [API 与流式事件](#api-与流式事件)
+- [开发说明](#开发说明)
+
+---
+
+## 快速开始
+
+### 环境要求
+
+- Python 3.11+
+- Node.js 20+ 与 npm
+- OpenAI-compatible 主 Agent 模型和多模态 Sub-agent 模型
+- 推荐 8 GB+ RAM；使用本地模型时按模型需求准备 GPU
+
+### 1. 安装
+
+```bash
+git clone https://github.com/QiZishi/OphAgent.git
+cd OphAgent
+
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+npm --prefix frontend ci
+npm --prefix frontend run build
 ```
 
-### 3.0 架构升级
+### 2. 配置
 
-- **可持久化 Run 协议**：每次状态迁移、工具结果、生成产物和公开进度事件都有稳定的 `run_id`、`trace_id` 与单调递增序号。
-- **真实流式响应**：支持 Provider Streaming 的终端文本会以 `answer.delta` 通过 SSE 推送；客户端先按持久化游标补齐早期事件，断线后从游标恢复且不重复内容。
-- **Quick / Standard / Deep 路由**：确定性的意图与风险规则选择有界计划；急症红旗可覆盖用户指定的 Quick 模式。
-- **类型化临床状态**：用户事实、缺失信息、红旗、证据与模型观察彼此分离，模型推测不能静默升级为已确认病情。
-- **可组合专业插件**：`lesion_localizer`、`aux_diagnosis`、`report_generator` 可由用户指定，也可由路由器组合调用。
-- **受控记忆与技能**：记忆先进入 `proposed`；导入的 `SKILL.md` 先隔离，结构、依赖、医疗安全与 checksum 门禁通过后才能启用。
-- **真实能力健康状态**：模型、搜索、解析或语音能力不可用时会明确报告，不使用预设医学结论冒充真实结果。
-- **隐私型可观测性**：OpenTelemetry 只允许导出标识、状态、耗时与 Token 聚合；Prompt、患者原文、文件内容和密钥不会进入遥测。
+```bash
+cp .env.example .env
+```
+
+在 `.env` 中填写最小运行配置：
+
+```dotenv
+JWT_SECRET_KEY=请替换为足够长的随机字符串
+
+AGENT_URL=https://your-provider.example/v1
+AGENT_API_KEY=...
+AGENT_MODEL=...
+
+SUB_AGENT_URL=https://your-provider.example/v1
+SUB_AGENT_API_KEY=...
+SUB_AGENT_MODEL=...
+```
+
+### 3. 启动
+
+```bash
+python init_db.py
+python run.py
+```
+
+打开 <http://localhost:8013>，创建账号并开始使用。默认 `STRICT_STARTUP=true`，启动时会校验必需模型配置。Embedding、Rerank、AnySearch/Tavily、ASR、TTS、MinerU 与 OTLP 均为可选能力，可在工作区查看连接状态。
+
+![OphAgent 控制台](figures/ophagent-workbench.png)
+
+---
 
 ## 产品能力
 
-| 能力 | 当前实现 |
+| 能力 | 使用体验 |
 |---|---|
 | 多轮眼科问答 | 持久化 Conversation、上下文快照、有界历史压缩和追问路由继承 |
 | 多模态复核 | 经过鉴权的眼底照、OCT、眼前节影像上传，返回经校验的观察与像素/归一化区域 |
-| 病灶定位 | 只渲染通过坐标校验的边界框；模型未返回有效区域时不会补造病灶框 |
+| 病灶定位 | 对模型返回区域执行像素与归一化坐标校验，在原图上呈现可复核病灶框 |
 | 辅助评估 | 给出定性鉴别的支持、反对与缺失证据；支持程度不等同于患病概率 |
 | 报告生成 | 带引用的 Markdown 报告、可编辑产物以及 MD/PDF/DOCX/JPG 导出 |
 | 知识检索 | 指南优先 BM25 + 可选 BGE-M3 Embedding/Rerank、来源生命周期、PDF 页图与轻量图谱扩展 |
 | 语音与文档 | 可选服务端 ASR/TTS、鉴权音频上传、MinerU/本地文档解析 |
 | 工作区管理 | 项目、私人文件、生成产物、个人 Provider 配置、记忆、技能、来源治理与能力健康状态 |
+
+以下截图均由当前仓库代码连接真实后端，在独立本地演示环境中完成注册、提问、检索和工作区操作后直接截取。
+
+### 知识库与来源治理
+
+知识工作区集中呈现来源、片段、向量、页图和图谱边统计，并支持资料导入、索引重建以及来源版本和有效状态管理。
+
+![OphAgent 知识库来源治理](figures/ophagent-knowledge.png)
+
+### 项目化诊疗工作区
+
+项目用于归集相关对话、文件和诊疗目标；文件库、插件、记忆、知识库、技能与设置共享同一鉴权工作区。
+
+![OphAgent 项目化工作区](figures/ophagent-projects.png)
+
+### 响应式移动端
+
+同一套 React 工作台适配桌面端与移动端，可在移动设备上发起对话、添加附件、选择插件和技能。
+
+<p align="center">
+  <img src="figures/ophagent-mobile.png" width="360" alt="OphAgent 移动端工作台">
+</p>
+
+---
+
+## 设计架构
+
+```mermaid
+flowchart TB
+    UI["交互层<br/>React 工作台 · 桌面端与移动端"]
+    API["接入层<br/>FastAPI · JWT Cookie · REST · SSE · WebSocket"]
+    GATE["安全与控制层<br/>红旗门禁 · 附件归属 · 幂等控制 · 运行预算"]
+    ROUTER["编排层<br/>意图路由 · Quick / Standard / Deep · 类型化 DAG"]
+    AGENTS["Agent 层<br/>Supervisor · Clinical · Evidence · Specialist · Critic · Report"]
+    TOOLS["能力层<br/>OphVLM-R1 · 多模态 · 指南检索 · 搜索 · 文档 · ASR / TTS"]
+    STATE["状态层<br/>ClinicalState · 证据账本 · 产物 · 记忆 · 技能"]
+    STORE["持久化层<br/>SQLModel · SQLite WAL · Run · 事件 · 附件 · 上下文快照"]
+
+    UI --> API
+    API --> GATE
+    GATE --> ROUTER
+    ROUTER --> AGENTS
+    AGENTS --> TOOLS
+    TOOLS --> STATE
+    STATE --> STORE
+    STORE -. 游标恢复与状态回放 .-> API
+```
+
+### 运行时关键特性
+
+- **可持久化 Run 协议**：每次状态迁移、工具结果、生成产物和公开进度事件都有稳定的 `run_id`、`trace_id` 与单调递增序号。
+- **真实流式响应**：Provider Streaming 文本以 `answer.delta` 通过 SSE 推送；客户端先按持久化游标补齐早期事件，断线后从游标恢复且不重复内容。
+- **Quick / Standard / Deep 路由**：确定性的意图与风险规则选择有界计划，急症红旗可覆盖用户指定的 Quick 模式。
+- **类型化临床状态**：用户事实、缺失信息、红旗、证据与模型观察分别进入明确字段。
+- **可组合专业插件**：`lesion_localizer`、`aux_diagnosis`、`report_generator` 可由用户指定，也可由路由器组合调用。
+- **受控记忆与技能**：记忆先进入 `proposed`；导入的 `SKILL.md` 经过结构、依赖、医疗安全与 checksum 门禁后启用。
+- **能力健康状态**：模型、检索、解析和语音服务以真实连接状态注册到工作区，便于部署者统一检查。
+- **隐私型可观测性**：OpenTelemetry 只允许导出标识、状态、耗时与 Token 聚合，患者内容和密钥保持在业务边界内。
+
+---
 
 ## 执行档位
 
@@ -171,7 +307,7 @@ flowchart LR
 | **Standard** | 知识问答、单张影像任务或常规临床请求 | 相关临床、证据与影像节点可并行执行，再统一整合 |
 | **Deep** | 复杂多模态评估、高风险症状或报告组合 | 加入相关亚专科复核，并执行 draft → critic → final 安全链 |
 
-界面只展示克制的阶段摘要、经校验结果和来源证据，不公开私有 Chain-of-Thought。
+界面展示阶段摘要、经校验结果和来源证据，并将私有 Chain-of-Thought 保持在模型内部。
 
 ## 医疗安全与可靠性
 
@@ -222,56 +358,9 @@ OphAgent/
 └── run.py
 ```
 
-## 快速开始
-
-### 环境要求
-
-- Python 3.11+
-- Node.js 20+ 与 npm
-- OpenAI-compatible 主 Agent 模型和多模态 Sub-agent 模型
-- 推荐 8 GB+ RAM；只有本地托管模型时才需要 GPU
-
-### 安装步骤
-
-```bash
-git clone git@github.com:QiZishi/OphAgent.git
-cd OphAgent
-
-python3.11 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-npm --prefix frontend ci
-npm --prefix frontend run build
-
-cp .env.example .env
-# 在 .env 中配置 JWT_SECRET_KEY、AGENT_* 与 SUB_AGENT_*。
-
-python init_db.py
-python run.py
-```
-
-访问 <http://localhost:8013>，创建账号后即可开始对话。默认 `STRICT_STARTUP=true`，必需模型凭据缺失时会在启动阶段直接报错。
-
-### 最小配置
-
-```dotenv
-JWT_SECRET_KEY=请替换为足够长的随机字符串
-
-AGENT_URL=https://your-provider.example/v1
-AGENT_API_KEY=...
-AGENT_MODEL=...
-
-SUB_AGENT_URL=https://your-provider.example/v1
-SUB_AGENT_API_KEY=...
-SUB_AGENT_MODEL=...
-```
-
-Embedding、Rerank、AnySearch/Tavily、ASR、TTS、MinerU 与 OTLP 均为可选能力。工作区会显示其真实状态，各能力可独立降级。
-
 ## 知识语料
 
-系统会自动索引 `data/knowledge_base/raw/` 下的受支持文件。可移植 CLI 能导入其他目录，不再依赖开发者本机绝对路径：
+系统会自动索引 `data/knowledge_base/raw/` 下的受支持文件，可移植 CLI 也支持从任意已授权目录导入语料：
 
 ```bash
 python scripts/build_knowledge_base.py \

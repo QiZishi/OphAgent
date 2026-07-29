@@ -32,6 +32,8 @@
 
 ## News
 
+- **2026.07.29** 🚀 **OphAgent 2.0 released** with a durable Agent runtime, typed DAG orchestration, SSE response streaming, evidence governance, multimodal plugins, project workspaces and medical safety gates.
+
 - **2026.07.07** 🎉 Paper “OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum Reinforcement Learning” accepted by **WAICA 2026**!
   - 📖 Conference: <https://waica2026.worldaic.com.cn/>
 
@@ -41,7 +43,7 @@
 - **2025.11.28** 📊 The high-quality ophthalmic multimodal reasoning dataset **OphReason-Vision** subset has been officially open-sourced on the ModelScope platform!
   - 🔗 Dataset Link: <https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision>
 
-- **2025.11.23** 🎬 The demo video for the original five-entry version of the “LingTong” system was released on Bilibili. The current OphAgent architecture has since been comprehensively redesigned.
+- **2025.11.23** 🎬 A live demo video of the “LingTong” Ophthalmic Intelligent Diagnosis System was released on Bilibili.
   - 🎥 Video Link: <https://www.bilibili.com/video/BV1g4UTBZEEm/>
 
 ## Background
@@ -70,11 +72,11 @@ Intern-S1 generates multidimensional instructions covering lesion localization, 
 
 > visual sign identification → knowledge retrieval → pathological analysis → clinical decision
 
-An LVLM-as-a-Judge filter uses Intern-S1 with threshold $\tau=0.7$, determined on 500 expert-reviewed pilot samples to maximize F1. It evaluates medical correctness, reasoning consistency, step completeness, and clarity, while flagging hallucinated findings, incorrect disease classification, and logically inconsistent steps.
+An LVLM-as-a-Judge filter uses Intern-S1 with threshold τ = 0.7, determined on 500 expert-reviewed pilot samples to maximize F1. It evaluates medical correctness, reasoning consistency, step completeness, and clarity, while flagging hallucinated findings, incorrect disease classification, and logically inconsistent steps.
 
 ### 3. Expert-Collaborative Optimization
 
-Three board-certified ophthalmologists review the 18% of samples flagged as difficult. Inter-rater agreement reaches Cohen's $\kappa=0.82$, and disagreements are discussed until consensus. Difficulty is graded from base-model perplexity so that the curriculum can progress from easier perception tasks to harder long-form reasoning tasks. Perceptual hashing, source-identifier cross-referencing, and manual source audits are used to reduce contamination with external benchmarks.
+Three board-certified ophthalmologists review the 18% of samples flagged as difficult. Inter-rater agreement reaches Cohen's κ = 0.82, and disagreements are discussed until consensus. Difficulty is graded from base-model perplexity so that the curriculum can progress from easier perception tasks to harder long-form reasoning tasks. Perceptual hashing, source-identifier cross-referencing, and manual source audits are used to reduce contamination with external benchmarks.
 
 | Split | Records | Purpose |
 |---|---:|---|
@@ -91,7 +93,7 @@ OphVLM-R1 is a 2B-parameter model based on InternVL3.5-2B. Its lightweight scale
 
 ### Stage 1: LoRA Supervised Fine-Tuning
 
-The 3,418-sample cold-start subset injects broad ophthalmic domain knowledge with Low-Rank Adaptation (LoRA), constraining weight updates to low-rank decomposition. The adapters use rank $r=64$ and scaling $\alpha=128$ on the $W_q$, $W_k$, $W_v$, and $W_o$ attention projections. Training uses cosine annealing from a learning rate of $1\times10^{-4}$, batch size 32, and 3 epochs; approximately 0.5% of the total parameters are trainable.
+The 3,418-sample cold-start subset injects broad ophthalmic domain knowledge with Low-Rank Adaptation (LoRA), constraining weight updates to low-rank decomposition. The adapters use rank r = 64 and scaling α = 128 on the W<sub>q</sub>, W<sub>k</sub>, W<sub>v</sub>, and W<sub>o</sub> attention projections. Training uses cosine annealing from a learning rate of 1 × 10<sup>−4</sup>, batch size 32, and 3 epochs; approximately 0.5% of the total parameters are trainable.
 
 ### Stage 2: Curriculum Reinforcement Learning
 
@@ -102,11 +104,11 @@ Four tasks are ordered by increasing diagnostic complexity:
 3. Report Generation.
 4. Knowledge Q&A.
 
-Group Sequence-level Policy Optimization (GSPO) addresses instability from token-level policy ratios in long reasoning chains by computing importance ratios at sequence level. Each curriculum stage optimizes a mixed reward combining rule-based verifiable reward and an Intern-S1-mini judge reward, with weights $\lambda_1=0.6$ and $\lambda_2=0.4$. Training uses $G=8$, $\varepsilon=0.2$, learning rate $5\times10^{-6}$, $\beta_{\mathrm{KL}}=0.04$, and 2 epochs per stage.
+Group Sequence-level Policy Optimization (GSPO) addresses instability from token-level policy ratios in long reasoning chains by computing importance ratios at sequence level. Each curriculum stage optimizes a mixed reward combining rule-based verifiable reward and an Intern-S1-mini judge reward, with weights λ<sub>1</sub> = 0.6 and λ<sub>2</sub> = 0.4. Training uses G = 8, ε = 0.2, learning rate 5 × 10<sup>−6</sup>, β<sub>KL</sub> = 0.04, and 2 epochs per stage.
 
 ### Hard-Sample Dynamic Backtracking
 
-An on-policy resampling mechanism tracks prompts whose rewards remain below a threshold over the most recent $k=5$ rounds and increases their sampling probability according to consecutive failure counts. It stores only prompt indices and failure statistics, ensuring fresh on-policy rollouts whenever a difficult prompt is revisited. Resampling is capped at 30% of each batch to retain coverage of already learned samples.
+An on-policy resampling mechanism tracks prompts whose rewards remain below a threshold over the most recent k = 5 rounds and increases their sampling probability according to consecutive failure counts. It stores only prompt indices and failure statistics, ensuring fresh on-policy rollouts whenever a difficult prompt is revisited. Resampling is capped at 30% of each batch to retain coverage of already learned samples.
 
 ## Model Performance
 
@@ -122,46 +124,180 @@ Accuracy is reported in percent. The average is reference-only because the bench
 
 Within the reported comparisons, OphVLM-R1 achieves 88.24% on out-of-domain OmniMedVQA-Eye and 42.58% on Fundus-MMBench. Its 56.41% reference average exceeds InternVL3.5-4B at 51.95% and the domain-adapted OphthaReason-Qwen-3B at 54.11%. Ablations reduce Omni-Eye by 26.21 points with SFT only, 10.10 points with one-shot RL, 3.72 points when GSPO is replaced by token-level GRPO, and 2.12 points without hard-sample backtracking. Results are single runs without confidence intervals or significance tests, and comparisons with off-the-shelf 7B/8B models should be interpreted cautiously because training-data exposure and model scale are not controlled.
 
-## OphAgent Design Architecture
+## OphAgent
 
-OphAgent-Pro 3.0 is not a collection of five isolated chat endpoints. It is a stateful Agent runtime: every request is triaged, routed into a bounded execution profile, recorded as a durable Run, and delivered to the React workspace through replayable events.
+**Works with your ophthalmic context and keeps every step organized.**
 
-```mermaid
-flowchart LR
-    UI["React workspace<br/>chat · files · projects · memory · skills"] --> API["FastAPI<br/>auth · REST · SSE · WebSocket"]
-    API --> GATE["Deterministic red-flag gate<br/>attachment ownership · budgets"]
-    GATE --> ROUTER["Intent router<br/>Quick · Standard · Deep"]
-    ROUTER --> DAG["Typed DAG planner<br/>parallel nodes + dependencies"]
-    DAG --> AGENTS["AgentScope ReAct roles<br/>supervisor · clinical · evidence · specialist · critic · report"]
-    AGENTS --> TOOLS["Real capabilities<br/>multimodal · search · MinerU · ASR/TTS"]
-    TOOLS --> STATE["ClinicalState + evidence ledger<br/>artifacts · confirmed memory"]
-    STATE --> STORE["SQLite WAL runtime store<br/>runs · events · attachments · snapshots"]
-    STORE --> API
+OphAgent is a full-stack Agent workspace for ophthalmic research and clinical assistance — deploy it on your own machine or server, extend it with skills and professional plugins, and organize images, documents, guideline evidence and reports in one continuous conversation.
+
+| | |
+|---|---|
+| **Durable by design** | Conversations, Runs, events, attachments and context snapshots are persisted with clear refresh, reconnect and recovery states. |
+| **Evidence first** | Guideline-first hybrid retrieval, source lifecycle, evidence ledgers and paragraph-level claim checks keep answers reviewable. |
+| **Security built in** | Red-flag rules, attachment ownership, idempotency, budgets, cancellation, coordinate validation and source gates span the execution path. |
+| **Multimodal and parallel** | Fundus, OCT, anterior-segment images, PDFs, text and audio enter a typed DAG whose relevant nodes can execute concurrently. |
+| **Extensible** | Three professional plugins, gated `SKILL.md` packages, memory, OpenAI-compatible providers and external tools share composable contracts. |
+| **Available everywhere** | A responsive React workspace covers desktop and mobile, with projects, files, knowledge, skills and settings in one place. |
+
+<details>
+<summary><b>What you can do with OphAgent</b></summary>
+
+<br>
+
+- **Ophthalmic Q&A and guideline retrieval**: continue a case discussion with automatic routing, citations and evidence review.
+- **Multimodal record review**: upload fundus, OCT, anterior-segment images, examination documents and audio.
+- **Professional plugin workflows**: compose lesion localization, auxiliary assessment and report generation on demand.
+- **Project-based organization**: group conversations, private files, generated artifacts and clinical goals.
+- **Editable reports**: continue editing in the document workspace and export MD, PDF, DOCX or JPG.
+- **Personalized capabilities**: manage confirmed memory, gated skills, provider configuration and knowledge sources.
+
+</details>
+
+---
+
+## OphAgent Contents
+
+- [Quick Start](#quick-start)
+- [Product Capabilities](#product-capabilities)
+- [Design Architecture](#design-architecture)
+- [Execution Profiles](#execution-profiles)
+- [Safety and Reliability](#safety-and-reliability)
+- [Technology Stack](#technology-stack)
+- [Repository Layout](#repository-layout)
+- [Knowledge Corpus](#knowledge-corpus)
+- [API and Streaming](#api-and-streaming)
+- [Development](#development)
+
+---
+
+## Quick Start
+
+### Requirements
+
+- Python 3.11+
+- Node.js 20+ and npm
+- OpenAI-compatible main Agent and multimodal Sub-agent models
+- 8 GB+ RAM recommended; provision a GPU according to your local model
+
+### 1. Install
+
+```bash
+git clone https://github.com/QiZishi/OphAgent.git
+cd OphAgent
+
+python3.11 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+npm --prefix frontend ci
+npm --prefix frontend run build
 ```
 
-### What is new in 3.0
+### 2. Configure
 
-- **Durable Run protocol** — every state transition, tool result, artifact and public progress event has a stable `run_id`, `trace_id` and monotonic sequence.
-- **True response streaming** — terminal prose is emitted as `answer.delta` events over SSE where the route supports provider streaming. Early events are backfilled from the durable cursor, and reconnects resume without duplicating content.
-- **Quick / Standard / Deep routing** — deterministic intent and risk rules select a bounded plan. Emergency signals override a requested quick mode.
-- **Typed clinical state** — user facts, missing information, red flags, evidence and model observations remain distinct; model inference cannot silently become a confirmed patient fact.
-- **Composable professional plugins** — `lesion_localizer`, `aux_diagnosis` and `report_generator` can be selected explicitly or composed by the router.
-- **Controlled memory and skills** — memory enters `proposed` before confirmation; imported `SKILL.md` packages stay quarantined until structure, dependency, safety and checksum gates pass.
-- **Real capability health** — unavailable models, search, parsing or speech services are reported as unavailable. The runtime never substitutes canned medical conclusions.
-- **Privacy-aware observability** — OpenTelemetry exports only allowlisted identifiers, status, latency and aggregate token usage; prompts, patient text, file contents and secrets are excluded.
+```bash
+cp .env.example .env
+```
+
+Set the minimum runtime configuration in `.env`:
+
+```dotenv
+JWT_SECRET_KEY=replace-with-a-long-random-secret
+
+AGENT_URL=https://your-provider.example/v1
+AGENT_API_KEY=...
+AGENT_MODEL=...
+
+SUB_AGENT_URL=https://your-provider.example/v1
+SUB_AGENT_API_KEY=...
+SUB_AGENT_MODEL=...
+```
+
+### 3. Run
+
+```bash
+python init_db.py
+python run.py
+```
+
+Open <http://localhost:8013>, create an account and start a conversation. `STRICT_STARTUP=true` validates required model settings during startup. Embeddings, Rerank, AnySearch/Tavily, ASR, TTS, MinerU and OTLP are optional capabilities whose connection state is visible in the workspace.
+
+![OphAgent console](figures/ophagent-workbench.png)
+
+---
 
 ## Product Capabilities
 
-| Capability | Current behavior |
+| Capability | Experience |
 |---|---|
 | Multiturn ophthalmic Q&A | Persistent conversations, context snapshots, bounded history compression and follow-up route inheritance |
 | Multimodal review | Authenticated fundus/OCT/anterior-segment uploads, validated observations and optional normalized/pixel regions |
-| Lesion localization | Renders only coordinate-validated boxes; no box is fabricated when the model does not return a valid region |
+| Lesion localization | Validates normalized and pixel coordinates before presenting reviewable regions on the source image |
 | Auxiliary assessment | Qualitative differentials with supporting, opposing and missing evidence; support levels are not disease probabilities |
 | Report generation | Citation-aware Markdown reports, editable artifacts and MD/PDF/DOCX/JPG export |
 | Knowledge retrieval | Guideline-first BM25 + optional BGE-M3 embeddings and Rerank, lifecycle filtering, PDF page visuals and lightweight graph expansion |
 | Speech and documents | Optional server-side ASR/TTS, authenticated audio upload and MinerU/local document parsing |
 | Workspace management | Projects, private files, generated artifacts, provider overrides, memory, skills, source governance and capability health |
+
+Every screenshot below was captured directly from the current repository running against its real backend in an isolated local demo environment after completing registration, query, retrieval and workspace actions.
+
+### Knowledge and source governance
+
+The knowledge workspace reports sources, chunks, vectors, page visuals and graph edges, with controls for import, index rebuild, source versioning and lifecycle state.
+
+![OphAgent knowledge source governance](figures/ophagent-knowledge.png)
+
+### Project-based clinical workspace
+
+Projects organize related conversations, files and clinical goals. Private files, plugins, memory, knowledge, skills and settings share the same authenticated workspace.
+
+![OphAgent project workspace](figures/ophagent-projects.png)
+
+### Responsive mobile workspace
+
+The React workspace adapts to desktop and mobile layouts, including chat, attachment, plugin and skill entry points.
+
+<p align="center">
+  <img src="figures/ophagent-mobile.png" width="360" alt="OphAgent mobile workspace">
+</p>
+
+---
+
+## Design Architecture
+
+```mermaid
+flowchart TB
+    UI["Experience<br/>React workspace · desktop and mobile"]
+    API["Access<br/>FastAPI · JWT Cookie · REST · SSE · WebSocket"]
+    GATE["Safety and control<br/>red-flag gate · attachment ownership · idempotency · budgets"]
+    ROUTER["Orchestration<br/>intent routing · Quick / Standard / Deep · typed DAG"]
+    AGENTS["Agents<br/>Supervisor · Clinical · Evidence · Specialist · Critic · Report"]
+    TOOLS["Capabilities<br/>OphVLM-R1 · multimodal · guidelines · search · documents · ASR / TTS"]
+    STATE["State<br/>ClinicalState · evidence ledger · artifacts · memory · skills"]
+    STORE["Persistence<br/>SQLModel · SQLite WAL · Runs · events · attachments · snapshots"]
+
+    UI --> API
+    API --> GATE
+    GATE --> ROUTER
+    ROUTER --> AGENTS
+    AGENTS --> TOOLS
+    TOOLS --> STATE
+    STATE --> STORE
+    STORE -. cursor resume and state replay .-> API
+```
+
+### Runtime highlights
+
+- **Durable Run protocol** — every state transition, tool result, artifact and public progress event has a stable `run_id`, `trace_id` and monotonic sequence.
+- **True response streaming** — provider text is emitted as `answer.delta` events over SSE. Early events are backfilled from a durable cursor, and reconnects resume without duplicated content.
+- **Quick / Standard / Deep routing** — deterministic intent and risk rules select a bounded plan, with emergency signals able to override a requested quick mode.
+- **Typed clinical state** — user facts, missing information, red flags, evidence and model observations occupy explicit fields.
+- **Composable professional plugins** — `lesion_localizer`, `aux_diagnosis` and `report_generator` can be selected explicitly or composed by the router.
+- **Controlled memory and skills** — memory enters `proposed`; imported `SKILL.md` packages pass structure, dependency, safety and checksum gates before enablement.
+- **Capability health** — model, retrieval, parsing and speech services register their live connection state in one operational view.
+- **Privacy-aware observability** — OpenTelemetry exports allowlisted identifiers, status, latency and aggregate token usage while patient content and secrets remain inside the application boundary.
+
+---
 
 ## Execution Profiles
 
@@ -171,7 +307,7 @@ flowchart LR
 | **Standard** | Knowledge Q&A, a single image task or routine clinical request | Relevant clinical, evidence and imaging nodes may execute in parallel before synthesis |
 | **Deep** | Complex multimodal assessment, high-risk symptoms or report composition | Specialist review plus draft → critic → final safety pipeline |
 
-The public UI shows concise stage summaries, validated outputs and evidence—not private chain-of-thought.
+The public UI presents concise stage summaries, validated outputs and evidence while private chain-of-thought remains internal to the model.
 
 ## Safety and Reliability
 
@@ -222,56 +358,9 @@ OphAgent/
 └── run.py
 ```
 
-## Quick Start
-
-### Requirements
-
-- Python 3.11+
-- Node.js 20+ and npm
-- An OpenAI-compatible main model and multimodal sub-agent model
-- 8 GB+ RAM recommended; GPU is only required when hosting models locally
-
-### Installation
-
-```bash
-git clone git@github.com:QiZishi/OphAgent.git
-cd OphAgent
-
-python3.11 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-npm --prefix frontend ci
-npm --prefix frontend run build
-
-cp .env.example .env
-# Configure JWT_SECRET_KEY, AGENT_* and SUB_AGENT_* in .env.
-
-python init_db.py
-python run.py
-```
-
-Open <http://localhost:8013>, create an account, and start a conversation. With `STRICT_STARTUP=true`, startup fails early when required model credentials are missing.
-
-### Minimum configuration
-
-```dotenv
-JWT_SECRET_KEY=replace-with-a-long-random-secret
-
-AGENT_URL=https://your-provider.example/v1
-AGENT_API_KEY=...
-AGENT_MODEL=...
-
-SUB_AGENT_URL=https://your-provider.example/v1
-SUB_AGENT_API_KEY=...
-SUB_AGENT_MODEL=...
-```
-
-Embedding, Rerank, AnySearch/Tavily, ASR, TTS, MinerU and OTLP are optional. Their state is visible in the capability panel, and each degrades independently.
-
 ## Knowledge Corpus
 
-The application automatically indexes supported files under `data/knowledge_base/raw/`. The portable CLI can import additional directories without developer-specific absolute paths:
+The application automatically indexes supported files under `data/knowledge_base/raw/`. Its portable CLI can also import corpora from any authorized directory:
 
 ```bash
 python scripts/build_knowledge_base.py \

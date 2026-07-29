@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import fitz
@@ -8,7 +10,7 @@ import pytest
 from app.core.config import Settings
 from app.domain.models import MemoryRecord
 from app.knowledge.retrieval import HybridKnowledgeRetriever
-from app.knowledge.sources import SourceRegistry
+from app.knowledge.sources import SourceRegistry, _atomic_json
 from app.runtime.agents import AgentScopeRunner
 from app.services.state import MemoryStore, SkillStore
 from scripts.build_knowledge_base import SourceSpec, collect_documents
@@ -83,6 +85,17 @@ def test_portable_knowledge_collection_deduplicates_content(tmp_path):
     assert imported == 1
     assert skipped == 1
     assert len(list(target.glob("*.md"))) == 1
+
+
+def test_atomic_source_registry_writes_are_safe_under_concurrency(tmp_path):
+    path = tmp_path / "index" / "sources.json"
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(lambda index: _atomic_json(path, {"writer": index}), range(64)))
+
+    payload = json.loads(path.read_text("utf-8"))
+    assert payload["writer"] in range(64)
+    assert list(path.parent.glob(".sources.json.*.tmp")) == []
 
 
 @pytest.mark.asyncio
