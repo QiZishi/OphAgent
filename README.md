@@ -32,7 +32,7 @@
 
 ## News
 
-- **2026.07.29** 🚀 **OphAgent 2.0 released** with a durable Agent runtime, typed DAG orchestration, SSE response streaming, evidence governance, multimodal plugins, project workspaces and medical safety gates.
+- **2026.07.29** 🚀 **OphAgent 2.0 released** with a durable Agent runtime, typed DAG orchestration, SSE response streaming, evidence governance, multimodal plugins, project workspaces, medical safety gates and a governed self-evolution Harness.
 
 - **2026.07.07** 🎉 Paper “OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum Reinforcement Learning” accepted by **WAICA 2026**!
   - 📖 Conference: <https://waica2026.worldaic.com.cn/>
@@ -52,7 +52,7 @@
 
 Ophthalmic multimodal large language models face three challenges: training data lacking structured reasoning chains, single-stage training that fails to cultivate deep clinical reasoning, and large model sizes that limit deployment in resource-constrained settings. The project addresses these challenges through an integrated data–model–agent stack. OphReason-Vision converts heterogeneous ophthalmic data into expert-verified reasoning trajectories; OphVLM-R1 develops clinical reasoning through a LoRA cold start followed by curriculum reinforcement learning; and OphAgent exposes model, retrieval and specialist capabilities through a durable clinical-assistance runtime.
 
-The current OphAgent combines **AgentScope ReAct agents**, deterministic medical safety gates, typed DAG planning, multimodal tools and provenance-aware retrieval. It exposes three public professional plugins—lesion localization, auxiliary assessment and report generation—while conversation, evidence retrieval, document parsing, speech and memory are coordinated as core capabilities rather than separate top-level agents. Only public execution summaries are displayed; hidden chain-of-thought is never exposed.
+The current OphAgent combines **AgentScope ReAct agents**, deterministic medical safety gates, typed DAG planning, multimodal tools, provenance-aware retrieval and a governed self-evolution Harness. It exposes three public professional plugins—lesion localization, auxiliary assessment and report generation—while conversation, evidence retrieval, document parsing, speech and memory are coordinated as core capabilities rather than separate top-level agents. Only public execution summaries are displayed; hidden chain-of-thought is never exposed.
 
 **Core objective:** empower clinicians, especially primary healthcare workers, with AI-assisted early screening and precise diagnosis capabilities for ophthalmic diseases. LingTong is a research and clinical-assistance system and is not a substitute for professional medical judgment.
 
@@ -137,6 +137,7 @@ OphAgent is a full-stack Agent workspace for ophthalmic research and clinical as
 | **Security built in** | Red-flag rules, attachment ownership, idempotency, budgets, cancellation, coordinate validation and source gates span the execution path. |
 | **Multimodal and parallel** | Fundus, OCT, anterior-segment images, PDFs, text and audio enter a typed DAG whose relevant nodes can execute concurrently. |
 | **Extensible** | Three professional plugins, gated `SKILL.md` packages, memory, OpenAI-compatible providers and external tools share composable contracts. |
+| **Controlled self-evolution** | Content-free feedback becomes an offline candidate that passes isolated worktree, paired evaluation, sealed test, trusted approval and atomic release gates. |
 | **Available everywhere** | A responsive React workspace covers desktop and mobile, with projects, files, knowledge, skills and settings in one place. |
 
 <details>
@@ -150,6 +151,7 @@ OphAgent is a full-stack Agent workspace for ophthalmic research and clinical as
 - **Project-based organization**: group conversations, private files, generated artifacts and clinical goals.
 - **Editable reports**: continue editing in the document workspace and export MD, PDF, DOCX or JPG.
 - **Personalized capabilities**: manage confirmed memory, gated skills, provider configuration and knowledge sources.
+- **Safe self-evolution**: turn outcomes and explicit feedback into candidates, then validate, approve, release or roll them back through an independent Harness.
 
 </details>
 
@@ -162,6 +164,7 @@ OphAgent is a full-stack Agent workspace for ophthalmic research and clinical as
 - [Design Architecture](#design-architecture)
 - [Execution Profiles](#execution-profiles)
 - [Safety and Reliability](#safety-and-reliability)
+- [Self-Evolution Harness](#self-evolution-harness)
 - [Technology Stack](#technology-stack)
 - [Repository Layout](#repository-layout)
 - [Knowledge Corpus](#knowledge-corpus)
@@ -320,6 +323,80 @@ The public UI presents concise stage summaries, validated outputs and evidence w
 - Restart recovery marks unfinished runs as interrupted and preserves completed work for resume/retry.
 - This is a research-grade clinical assistance system. It does not provide a definitive diagnosis or replace emergency and professional medical assessment.
 
+---
+
+## Self-Evolution Harness
+
+OphAgent separates online learning signals from production changes through two governed loops. `ContinuousEvolutionController` aggregates content-free run outcomes, explicit feedback and memory-governance actions. `EvolutionHarness` creates, freezes, evaluates and promotes candidates inside an offline isolated environment. Every evolution is bound to a baseline commit, candidate commit, case set, approval record, release reference and audit event.
+
+```mermaid
+flowchart TB
+    OUTCOME["Online outcomes<br/>Run status · explicit feedback · memory governance"]
+    SIGNAL["Privacy-minimized signals<br/>hashed fingerprint · route · plugins/skills · cost"]
+    CANDIDATE["Bounded candidates<br/>runtime · skill · memory retrieval/extraction"]
+    PROPOSAL["EvolutionProposal<br/>failure cluster · allowlisted paths · risk · activation"]
+    ISOLATE["Isolated Git worktree<br/>bound to base commit"]
+    FREEZE["Candidate freeze<br/>validate diff and declared paths · pin candidate commit"]
+    PAIRED["Paired evaluation<br/>baseline vs candidate on identical cases"]
+    SEALED["Sealed test<br/>candidate-invisible · routine / complex / high_risk"]
+    GATES["Promotion gates<br/>gain · 95% CI · slice non-regression · safety/citation · cost"]
+    APPROVAL["Trusted human approval<br/>HMAC attestation bound to candidate commit"]
+    RELEASE["Atomic release<br/>refs/ophagent/releases/* · refs/ophagent/active"]
+    EXPERIENCE["Audit and experience<br/>verifiable release · atomic rollback"]
+
+    OUTCOME --> SIGNAL
+    SIGNAL --> CANDIDATE
+    CANDIDATE --> PROPOSAL
+    PROPOSAL --> ISOLATE
+    ISOLATE --> FREEZE
+    FREEZE --> PAIRED
+    PAIRED --> SEALED
+    SEALED --> GATES
+    GATES --> APPROVAL
+    APPROVAL --> RELEASE
+    RELEASE --> EXPERIENCE
+```
+
+| Stage | Harness implementation |
+|---|---|
+| Online signals | Stores Run fingerprints, status, risk, route, plugins/skills, error codes, warning counts, tokens, explicit votes and memory-governance actions; patient queries, answers, attachments, evidence text and user identifiers remain outside evolution signals |
+| Bounded adaptation | Confirmed non-clinical preference and workspace memories can receive at most a 15% retrieval boost from repeated positive feedback; other improvements become offline candidates |
+| Mutation boundary | Candidates can modify only declared paths under `app/runtime/`, `app/knowledge/`, `app/plugins/`, `app/services/`, `skills/`, `frontend/src/` and `config/` |
+| Isolation and freeze | Every proposal receives an independent Git worktree; the Harness validates the diff, declared paths and workspace state before pinning one candidate commit |
+| Paired evaluation | Baseline and candidate use identical case IDs and report routine, complex and high-risk slices separately |
+| Sealed test | Cases and manifest live outside the repository and candidate worktree, with one-shot release evaluation, complete slices, mandatory metrics and controller-issued HMAC attestations |
+| Promotion criteria | Mean gain reaches its threshold with a non-negative 95% confidence-interval lower bound; every slice is non-regressive, high-risk cases do not lose score, and safety, citation and critical-error gates pass |
+| Resource gates | The default candidate token-ratio ceiling is 1.15 and the latency-ratio ceiling is 1.20 |
+| Approval and release | A signed human approval binds both proposal and candidate commit; a `git update-ref` transaction atomically updates the release ref and active ref |
+| Rollback and audit | Rollback targets are restricted to frozen releases; proposals, evaluations, approvals, promotions, rollbacks and de-identified experience remain auditable |
+
+The Harness can connect to official **A-Evolve**, **GEPA** and **Adaptive Auto-Harness** packages through `requirements-evolution.txt`. The local adapters handle capability detection and governed invocation while promotion continues through OphAgent safety gates.
+
+<details>
+<summary><b>Configure offline evolution and promotion gates</b></summary>
+<br>
+
+```bash
+# Install only in an isolated offline evaluation environment
+pip install -r requirements-evolution.txt
+```
+
+```dotenv
+# The sealed suite must stay outside the repository and candidate worktree
+EVOLUTION_SEALED_TEST_DIR=/secure/path/to/sealed-suite
+EVOLUTION_GATE_SECRET_FILE=/secure/path/to/evolution-gate-secret
+EVOLUTION_REQUIRE_HUMAN_APPROVAL=true
+
+# Default promotion thresholds
+EVOLUTION_MIN_MEAN_IMPROVEMENT=0.01
+EVOLUTION_MAX_SLICE_REGRESSION=0.0
+EVOLUTION_MIN_CASES_PER_SLICE=1
+```
+
+Inspect live signals and candidate status through the authenticated `GET /api/v1/evolution/status` endpoint.
+
+</details>
+
 ## Technology Stack
 
 | Layer | Implementation |
@@ -329,6 +406,7 @@ The public UI presents concise stage summaries, validated outputs and evidence w
 | Agent runtime | AgentScope 1.0 ReAct roles, deterministic routing and typed async DAG execution |
 | Persistence | SQLModel conversation/account database + SQLite WAL runtime event store |
 | Knowledge | BM25, NumPy vector persistence, OpenAI-compatible embeddings/Rerank, PDF page evidence, OphthaGraph |
+| Self-evolution | Content-free online signals, isolated Git worktrees, paired/sealed evaluation, HMAC attestations and atomic release refs |
 | Observability | OpenTelemetry with export-time privacy filtering |
 | Quality | Pytest, Vitest, ESLint, Ruff, Playwright and axe accessibility checks |
 
@@ -413,10 +491,6 @@ When adding a capability:
 3. Update routing/planning in `app/runtime/` without bypassing risk gates or budgets.
 4. Add replayable public events and tests for ownership, failure and cancellation paths.
 5. Expose only validated public summaries in the React workspace.
-
-## Controlled Offline Evolution
-
-Online feedback is stored as bounded, content-free signals; it cannot rewrite production prompts, code, skills or medical facts. Candidate changes run in isolated Git worktrees and require paired evaluation, sealed-test attestation, slice-level non-regression, cost/latency gates and human approval before promotion. Optional official integrations are installed separately with `requirements-evolution.txt`.
 
 ## Open Source Status
 

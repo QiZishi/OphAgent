@@ -32,7 +32,7 @@
 
 ## 新闻动态
 
-- **2026.07.29** 🚀 **OphAgent 2.0 发布**：完成可持久化 Agent 运行时、类型化 DAG 编排、SSE 流式响应、证据治理、多模态插件、项目化工作区与医疗安全门禁升级。
+- **2026.07.29** 🚀 **OphAgent 2.0 发布**：完成可持久化 Agent 运行时、类型化 DAG 编排、SSE 流式响应、证据治理、多模态插件、项目化工作区、医疗安全门禁与受控自进化 Harness 升级。
 
 - **2026.07.07** 🎉 论文 “OphVLM-R1: Efficient Ophthalmic Reasoning via Curriculum Reinforcement Learning” 被 **WAICA 2026** 接收！
   - 📖 会议官网：<https://waica2026.worldaic.com.cn/>
@@ -52,7 +52,7 @@
 
 眼科多模态大语言模型面临三大挑战：训练数据缺乏结构化推理链、单阶段训练难以培养深度临床推理能力，以及模型规模过大制约资源受限环境中的部署。项目通过一体化的“数据—模型—智能体”技术栈解决这些问题：OphReason-Vision 将异构眼科数据转化为经过专家验证的推理轨迹；OphVLM-R1 通过 LoRA 冷启动和课程强化学习获得临床推理能力；OphAgent 则通过可持久化临床辅助运行时统一调度模型、检索与专科能力。
 
-当前 OphAgent 结合 **AgentScope ReAct 智能体**、确定性医疗安全门禁、类型化 DAG 规划、多模态工具与带来源治理的知识检索。系统对外提供病灶定位、辅助评估和报告生成三个专业插件；对话、证据检索、文档解析、语音和记忆则作为核心能力统一编排。界面只呈现公开执行摘要，不展示隐藏 Chain-of-Thought。
+当前 OphAgent 结合 **AgentScope ReAct 智能体**、确定性医疗安全门禁、类型化 DAG 规划、多模态工具、带来源治理的知识检索与受控自进化 Harness。系统对外提供病灶定位、辅助评估和报告生成三个专业插件；对话、证据检索、文档解析、语音和记忆则作为核心能力统一编排。界面只呈现公开执行摘要，不展示隐藏 Chain-of-Thought。
 
 **核心目标：**通过 AI 技术赋能临床医生，尤其是基层医疗工作者，提升眼科疾病的早期筛查与精准诊断能力。“灵瞳”目前定位为研究与临床辅助系统，不能替代专业医疗判断。
 
@@ -137,6 +137,7 @@ OphAgent 是面向眼科研究与临床辅助场景的全栈 Agent 工作台—�
 | **安全内建** | 红旗规则、附件归属、幂等控制、预算、取消、坐标校验和来源门禁贯穿整个执行链。 |
 | **多模态并行** | 眼底照、OCT、眼前节影像、PDF、文本与音频进入类型化 DAG，由相关节点并行处理。 |
 | **易于扩展** | 三个专业插件、受控 `SKILL.md`、记忆、OpenAI-compatible Provider 与外部工具按统一契约组合。 |
+| **受控自进化** | 去内容化反馈形成离线候选，经隔离 worktree、配对评测、sealed test、可信审批和原子发布完成演化闭环。 |
 | **随处可用** | 响应式 React 工作台覆盖桌面端和移动端，项目、文件、知识、技能和设置共享同一工作空间。 |
 
 <details>
@@ -150,6 +151,7 @@ OphAgent 是面向眼科研究与临床辅助场景的全栈 Agent 工作台—�
 - **项目化资料管理**：把对话、私人文件、生成产物和诊疗目标归集到同一项目。
 - **可编辑报告**：在文档工作区继续编辑，并导出 MD、PDF、DOCX 或 JPG。
 - **个性化能力**：管理已确认记忆、受控技能、Provider 配置和知识来源。
+- **安全自进化**：根据运行结果与显式反馈生成候选，并在独立 Harness 中验证、审批、发布或回滚。
 
 </details>
 
@@ -162,6 +164,7 @@ OphAgent 是面向眼科研究与临床辅助场景的全栈 Agent 工作台—�
 - [设计架构](#设计架构)
 - [执行档位](#执行档位)
 - [医疗安全与可靠性](#医疗安全与可靠性)
+- [自进化 Harness](#自进化-harness)
 - [技术栈](#技术栈)
 - [项目结构](#项目结构)
 - [知识语料](#知识语料)
@@ -320,6 +323,80 @@ flowchart TB
 - 服务重启会把未完成任务标记为 `interrupted`，已完成步骤仍可用于恢复或重试。
 - 本系统定位为研究级临床辅助工具，不能给出最终确诊，也不能替代急诊与专业医疗评估。
 
+---
+
+## 自进化 Harness
+
+OphAgent 将在线学习信号与生产变更分成两个受控环路：`ContinuousEvolutionController` 只汇总去内容化的运行结果、显式反馈与记忆治理动作；`EvolutionHarness` 在离线隔离环境中创建、冻结、评测和晋升候选。每一次演化都有明确的基线 commit、候选 commit、病例集合、审批记录、发布引用与审计事件。
+
+```mermaid
+flowchart TB
+    OUTCOME["线上结果<br/>Run 状态 · 显式反馈 · 记忆治理"]
+    SIGNAL["隐私最小化信号<br/>哈希指纹 · 路由 · 插件/技能 · 成本"]
+    CANDIDATE["有界候选<br/>runtime · skill · memory retrieval/extraction"]
+    PROPOSAL["EvolutionProposal<br/>失败簇 · 白名单路径 · 风险 · 激活条件"]
+    ISOLATE["隔离 Git worktree<br/>绑定 base commit"]
+    FREEZE["候选冻结<br/>校验真实 diff 与声明路径 · 固定 candidate commit"]
+    PAIRED["同病例配对评测<br/>baseline vs candidate"]
+    SEALED["Sealed test<br/>候选不可见 · routine / complex / high_risk"]
+    GATES["晋升门禁<br/>收益 · 95% CI · 切片非劣 · 安全/引用 · Token/延迟"]
+    APPROVAL["可信人工审批<br/>HMAC attestation 绑定 candidate commit"]
+    RELEASE["原子发布<br/>refs/ophagent/releases/* · refs/ophagent/active"]
+    EXPERIENCE["审计与经验记录<br/>可验证 release · 原子回滚"]
+
+    OUTCOME --> SIGNAL
+    SIGNAL --> CANDIDATE
+    CANDIDATE --> PROPOSAL
+    PROPOSAL --> ISOLATE
+    ISOLATE --> FREEZE
+    FREEZE --> PAIRED
+    PAIRED --> SEALED
+    SEALED --> GATES
+    GATES --> APPROVAL
+    APPROVAL --> RELEASE
+    RELEASE --> EXPERIENCE
+```
+
+| 环节 | Harness 实现 |
+|---|---|
+| 在线信号 | 保存 Run 指纹、状态、风险、路由、插件/技能、错误码、警告数、Token、显式赞踩和记忆治理动作；患者问题、回答、附件、证据正文和用户标识不进入演化信号 |
+| 有界适应 | 已确认的非临床偏好与工作区记忆可根据重复正反馈获得最多 15% 的召回增益；其他改进形成离线候选 |
+| 变更边界 | 候选只能修改 `app/runtime/`、`app/knowledge/`、`app/plugins/`、`app/services/`、`skills/`、`frontend/src/` 与 `config/` 中声明的路径 |
+| 隔离与冻结 | 每个 proposal 创建独立 Git worktree；评测前检查 diff、声明路径与工作区状态，并冻结为唯一 candidate commit |
+| 配对评测 | baseline 与 candidate 使用完全相同的 case ID，分别报告 routine、complex 和 high-risk 切片 |
+| Sealed test | 病例与 manifest 存放在仓库和候选 worktree 之外，要求一次性发布评测、完整切片、强制指标以及控制器 HMAC attestation |
+| 晋升标准 | 平均提升达到阈值且 95% 置信区间下界非负；各切片非劣，高风险病例不降分，医疗安全、引用和关键错误门禁通过 |
+| 资源门禁 | candidate Token 比例上限默认为 1.15，延迟比例上限默认为 1.20 |
+| 审批与发布 | 人工审批签名同时绑定 proposal 与 candidate commit；通过 `git update-ref` 事务原子更新 release ref 和 active ref |
+| 回滚与审计 | 只允许回滚到已冻结 release；proposal、评测、审批、晋升、回滚和去标识经验均保留审计记录 |
+
+Harness 可通过 `requirements-evolution.txt` 接入官方 **A-Evolve**、**GEPA** 与 **Adaptive Auto-Harness**，本地适配层只负责能力探测和受控调用，晋升仍统一经过 OphAgent 的安全门禁。
+
+<details>
+<summary><b>配置离线演化与晋升门禁</b></summary>
+<br>
+
+```bash
+# 仅在隔离的离线评测环境安装
+pip install -r requirements-evolution.txt
+```
+
+```dotenv
+# sealed suite 必须位于项目仓库与候选 worktree 之外
+EVOLUTION_SEALED_TEST_DIR=/secure/path/to/sealed-suite
+EVOLUTION_GATE_SECRET_FILE=/secure/path/to/evolution-gate-secret
+EVOLUTION_REQUIRE_HUMAN_APPROVAL=true
+
+# 默认晋升阈值
+EVOLUTION_MIN_MEAN_IMPROVEMENT=0.01
+EVOLUTION_MAX_SLICE_REGRESSION=0.0
+EVOLUTION_MIN_CASES_PER_SLICE=1
+```
+
+运行中的信号与候选状态可通过鉴权接口 `GET /api/v1/evolution/status` 查看。
+
+</details>
+
 ## 技术栈
 
 | 层级 | 实现 |
@@ -329,6 +406,7 @@ flowchart TB
 | Agent 运行时 | AgentScope 1.0 ReAct 角色、确定性路由与类型化异步 DAG |
 | 持久化 | SQLModel 账号/对话数据库 + SQLite WAL 运行事件存储 |
 | 知识系统 | BM25、NumPy 向量持久化、OpenAI-compatible Embedding/Rerank、PDF 页图、OphthaGraph |
+| 自进化 | 去内容化在线信号、隔离 Git worktree、配对/密封评测、HMAC attestation、原子 release ref |
 | 可观测性 | 带导出时隐私白名单的 OpenTelemetry |
 | 工程质量 | Pytest、Vitest、ESLint、Ruff、Playwright 与 axe 无障碍检查 |
 
@@ -413,10 +491,6 @@ npm --prefix frontend run test:e2e -- workspace.spec.ts
 3. 在 `app/runtime/` 更新路由与规划，不能绕过风险门禁和运行预算。
 4. 为公开事件、附件归属、失败和取消路径补充回归测试。
 5. React 工作台只展示通过校验的公开摘要。
-
-## 受控离线演化
-
-线上反馈只保存有界、去内容化信号，不能自动改写生产 Prompt、代码、技能或医疗事实。候选修改在隔离 Git worktree 中运行，晋升前必须通过同病例配对评测、sealed-test attestation、切片非劣、成本/延迟门禁与人工审批。官方可选实现通过 `requirements-evolution.txt` 单独安装。
 
 ## 开源状态
 
