@@ -12,7 +12,7 @@ from app.domain.models import MemoryRecord
 from app.knowledge.retrieval import HybridKnowledgeRetriever
 from app.knowledge.sources import SourceRegistry, _atomic_json
 from app.runtime.agents import AgentScopeRunner
-from app.services.state import MemoryStore, SkillStore
+from app.services.state import MemoryStore, SkillStore, atomic_json
 from scripts.build_knowledge_base import SourceSpec, collect_documents
 from tests.fakes import FakeCapabilityClients
 
@@ -185,10 +185,23 @@ plugins: [aux_diagnosis]
     validated = await store.validate(imported.id)
     assert validated.status == "validated"
     assert validated.evaluation["passed"] is True
-    enabled = await store.set_status(imported.id, "enabled")
-    assert enabled.status == "enabled"
+    assert validated.evaluation["offline_review_required"] is True
+    with pytest.raises(ValueError, match="离线人工审核"):
+        await store.set_status(imported.id, "enabled")
+    tampered = store._states()
+    tampered[imported.id]["status"] = "enabled"
+    atomic_json(store.path, tampered)
     runner = AgentScopeRunner(FakeCapabilityClients(), store.config)
     runner.set_run_context("aux_diagnosis")
+    assert not any(
+        path.name == "1.2.0"
+        for path in runner._enabled_skill_paths("ClinicalReasoningAgent")
+    )
+    tampered[imported.id]["status"] = "validated"
+    atomic_json(store.path, tampered)
+    await store.approve_offline(imported.id, "clinical-safety-reviewer")
+    enabled = await store.set_status(imported.id, "enabled")
+    assert enabled.status == "enabled"
     assert any(
         path.name == "1.2.0"
         for path in runner._enabled_skill_paths("ClinicalReasoningAgent")

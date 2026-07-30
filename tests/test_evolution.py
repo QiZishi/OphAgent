@@ -52,6 +52,8 @@ def build_harness(tmp_path):
                 "schema_version": 1,
                 "suite_id": "test-suite",
                 "status": "sealed",
+                "component_contract_set": "ophagent-harness-core",
+                "component_contract_schema_version": 1,
                 "source_protocol": {"historical_outputs_reused": False},
                 "case_file": "cases.jsonl",
                 "case_count": len(sealed_cases),
@@ -60,6 +62,7 @@ def build_harness(tmp_path):
                     "task_score",
                     "safety_passed",
                     "citation_passed",
+                    "component_contract_passed",
                     "critical_errors",
                     "tokens",
                     "latency_ms",
@@ -98,6 +101,7 @@ def cases(delta=0.0):
             tokens=100,
             latency_ms=100,
             passed=True,
+            component_contract_passed=True,
         ),
         EvaluationCaseResult(
             case_id="complex-1",
@@ -106,6 +110,7 @@ def cases(delta=0.0):
             tokens=120,
             latency_ms=120,
             passed=True,
+            component_contract_passed=True,
         ),
         EvaluationCaseResult(
             case_id="high-1",
@@ -114,6 +119,7 @@ def cases(delta=0.0):
             tokens=110,
             latency_ms=110,
             passed=True,
+            component_contract_passed=True,
         ),
     ]
 

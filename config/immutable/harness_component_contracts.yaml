@@ -1,0 +1,101 @@
+schema_version: 1
+contract_set: ophagent-harness-core
+governance_track: immutable
+definition: >
+  A component may improve its data, bounded parameters and replaceable
+  strategies, but it must preserve its identity, responsibility, authority,
+  input/output contract and fail-safe behavior.
+update_policy:
+  contract_update_allowed_online: false
+  isolated_candidate_required: true
+  sealed_contract_evaluation_required: true
+  trusted_human_approval_required: true
+components:
+  - id: orchestration
+    paths: [app/runtime/orchestrator.py]
+    core_definition: Converts one accepted run into a bounded, recoverable DAG and durable lifecycle.
+    essential_mechanisms:
+      - Persist every state transition and terminal outcome.
+      - Propagate cancellation, budgets and required-node failures.
+      - Never turn a missing required result into a successful run.
+    online_mutable_state: []
+  - id: routing
+    paths: [app/runtime/routing.py]
+    core_definition: Selects an execution profile and nodes from request type, evidence needs and risk.
+    essential_mechanisms:
+      - Deterministic safety signals can only escalate, never be overruled by preference.
+      - Routes remain bounded by declared capability and budget.
+    online_mutable_state: [bounded_non_safety_selection_utility]
+  - id: agent_runtime
+    paths: [app/runtime/agents.py]
+    core_definition: Builds isolated role agents with explicit prompts, tools and Skill selection.
+    essential_mechanisms:
+      - No hidden conversational state crosses run boundaries.
+      - Tool and Skill access stays capability-scoped.
+      - Safety-critical Skills cannot be suppressed by online utility.
+    online_mutable_state: [validated_low_risk_skill_utility]
+  - id: conversation_context
+    paths: [app/runtime/context.py]
+    core_definition: Supplies bounded multi-turn context while preserving source and verification status.
+    essential_mechanisms:
+      - Recent turns are bounded and older turns are compressed.
+      - Prior assistant output remains unverified context rather than user fact.
+      - Context from one conversation cannot leak into another.
+    online_mutable_state: [conversation_snapshot]
+  - id: memory
+    paths: [app/services/state.py, app/services/memory_evolution.py, app/runtime/governance.py]
+    core_definition: Maintains user-scoped, low-authority long-term context with an explicit CRUD lifecycle.
+    essential_mechanisms:
+      - Users can create, correct and delete mutable memories.
+      - Provenance, confirmation, conflict, expiry and sensitivity remain explicit.
+      - Memory cannot override system, safety, business, permission or tool policy.
+      - Clinical memory cannot be auto-confirmed or deleted from coarse outcome feedback.
+    online_mutable_state: [preference_records, workspace_records, bounded_retrieval_utility]
+  - id: skill
+    paths: [app/services/state.py, app/services/skill_policy.py, app/runtime/agents.py, skills]
+    core_definition: Packages reusable instructions selected under declared capability and risk constraints.
+    essential_mechanisms:
+      - Candidate content is checksum-bound to deterministic validation.
+      - Dangerous content, dependencies and capabilities require offline human review.
+      - Online feedback may adapt only validated low-risk selection behavior.
+    online_mutable_state: [low_risk_candidate_lifecycle, validated_low_risk_selection_utility]
+  - id: knowledge_retrieval
+    paths: [app/knowledge]
+    core_definition: Retrieves evidence with provenance, freshness and trust information.
+    essential_mechanisms:
+      - Retrieved claims retain source identity and location.
+      - Expired, superseded and low-trust evidence remains distinguishable.
+      - Retrieval failure cannot be presented as supporting evidence.
+    online_mutable_state: [bounded_ranking_utility, cache]
+  - id: safety
+    paths: [app/runtime/safety.py]
+    core_definition: Detects red flags and enforces conservative escalation before and after generation.
+    essential_mechanisms:
+      - Deterministic red-line handling is non-bypassable.
+      - Uncertainty or subsystem failure cannot weaken escalation.
+      - Patient preference cannot lower the required safety action.
+    online_mutable_state: []
+  - id: tools_and_plugins
+    paths: [app/tools, app/plugins]
+    core_definition: Exposes explicitly registered capabilities within permission and dependency boundaries.
+    essential_mechanisms:
+      - Undeclared tools and permissions are unavailable.
+      - External failures are explicit and cannot fabricate successful results.
+      - Online evolution cannot expand permissions or dependencies.
+    online_mutable_state: [bounded_low_risk_selection_utility]
+  - id: evolution
+    paths: [app/evolution, config/immutable]
+    core_definition: Improves bounded behavior while keeping candidate generation separate from trusted promotion.
+    essential_mechanisms:
+      - Online and offline tracks cannot be mixed in one proposal.
+      - Candidate code cannot modify or access its evaluator, sealed tests, approval or release gate.
+      - Promotion is bound to a frozen commit, paired evaluation and required approval.
+      - Component contract preservation is a mandatory promotion gate.
+    online_mutable_state: [content_free_feedback_statistics, bounded_utility_state]
+  - id: observability
+    paths: [app/observability]
+    core_definition: Records operational state and aggregate performance without exposing protected content.
+    essential_mechanisms:
+      - Prompts, patient content, attachments and secrets are excluded.
+      - Failures and lifecycle transitions remain observable.
+    online_mutable_state: [aggregate_metrics]

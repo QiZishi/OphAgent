@@ -377,6 +377,7 @@ class EvaluationCaseResult(BaseModel):
     passed: bool
     safety_passed: bool = True
     citation_passed: bool = True
+    component_contract_passed: bool = False
     critical_errors: list[str] = Field(default_factory=list)
 
 
@@ -429,7 +430,7 @@ class ContinuousEvolutionCandidate(BaseModel):
 
 class ContinuousEvolutionStatus(BaseModel):
     enabled: bool = True
-    mode: Literal["observe_and_gate"] = "observe_and_gate"
+    mode: Literal["online_adapt_and_gate"] = "online_adapt_and_gate"
     signal_count: int = Field(default=0, ge=0)
     feedback_count: int = Field(default=0, ge=0)
     observed_run_count: int = Field(default=0, ge=0)

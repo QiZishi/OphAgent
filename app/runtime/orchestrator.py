@@ -19,6 +19,7 @@ from app.domain.models import (
     ClinicalState,
     ContextStats,
     EvidenceItem,
+    MemoryRecord,
     NodeStatus,
     RiskLevel,
     RunBudget,
@@ -41,6 +42,7 @@ from app.runtime.planning import build_plan
 from app.runtime.routing import is_contextual_follow_up, route_task
 from app.runtime.safety import apply_red_flag_gate, emergency_banner
 from app.runtime.store import RuntimeStore
+from app.services.memory_evolution import parse_online_memory_commands
 from app.services.provider_config import ProviderConfigStore
 from app.services.state import MemoryStore
 from app.tools.capabilities import (
@@ -532,6 +534,13 @@ class RunOrchestrator:
                 run.route.selected_plugins if run.route and run.route.selected_plugins else "core",
                 run.input.requested_skills,
             )
+        set_skill_utility = getattr(runner, "set_skill_utility_provider", None)
+        if callable(set_skill_utility):
+            set_skill_utility(
+                self.evolution_controller.skill_utility_factor
+                if self.evolution_controller is not None
+                else None,
+            )
         started = time.monotonic()
         try:
             run.status = RunStatus.RUNNING
@@ -542,6 +551,7 @@ class RunOrchestrator:
                 "OphAgent 开始处理",
                 data={"complexity": run.route.complexity if run.route else "standard"},
             )
+            await self._sync_online_memory(run)
 
             while True:
                 self._check_cancel(run)
@@ -1478,6 +1488,68 @@ class RunOrchestrator:
             for item in memories
         ]
         return bounded_preference_context(records)
+
+    async def _sync_online_memory(self, run: RunRecord) -> None:
+        """Apply explicit low-risk Memory CRUD before the run consumes preferences."""
+        if self.memory_store is None:
+            return
+        expired = await self.memory_store.purge_expired_mutable(run.user_id)
+        for memory in expired:
+            await self._record_online_memory_action(memory, "expired")
+            await self._event(
+                run,
+                "memory.deleted",
+                "已清理过期的用户偏好记忆",
+                data={"memory_id": memory.id, "category": memory.category, "reason": "expired"},
+            )
+        for command in parse_online_memory_commands(run.input.query):
+            if command.action in {"create", "update"}:
+                content = command.replacement or command.content
+                memory, action = await self.memory_store.upsert_mutable(
+                    user_id=run.user_id,
+                    category=command.category,
+                    content=content,
+                    source=f"run:{run.id}; explicit_user_instruction",
+                    key=command.key,
+                    target=command.content if command.action == "update" else None,
+                )
+                if action == "unchanged":
+                    continue
+                await self._record_online_memory_action(memory, action)
+                await self._event(
+                    run,
+                    f"memory.{action}",
+                    "已根据用户明确指令更新长期偏好",
+                    data={"memory_id": memory.id, "category": memory.category},
+                )
+                continue
+            removed = await self.memory_store.delete_mutable(
+                user_id=run.user_id,
+                category=command.category,
+                content=command.content,
+                key=command.key,
+                clear_all=command.clear_all,
+            )
+            for memory in removed:
+                await self._record_online_memory_action(memory, "deleted")
+                await self._event(
+                    run,
+                    "memory.deleted",
+                    "已根据用户明确指令删除长期偏好",
+                    data={"memory_id": memory.id, "category": memory.category},
+                )
+
+    async def _record_online_memory_action(
+        self,
+        memory: MemoryRecord,
+        action: str,
+    ) -> None:
+        if self.evolution_controller is None:
+            return
+        try:
+            await self.evolution_controller.record_memory_action(memory, action)
+        except (OSError, TypeError, ValueError):
+            return
 
     @staticmethod
     def _completed_context(run: RunRecord) -> dict[str, Any]:

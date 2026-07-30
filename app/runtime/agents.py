@@ -22,6 +22,7 @@ from agentscope.plan import PlanNotebook
 from agentscope.tool import Toolkit, ToolResponse
 
 from app.core.config import Settings, settings
+from app.services.skill_policy import requires_offline_skill_review
 from app.tools.capabilities import CapabilityClients, SearchRequest
 
 AGENT_PROMPTS = {
@@ -92,6 +93,7 @@ ROLE_CAPABILITIES = {
         "triage",
     },
 }
+SAFETY_CRITICAL_SKILLS = {"red_flag_triage"}
 
 
 @dataclass(slots=True)
@@ -142,6 +144,7 @@ class AgentScopeRunner:
         self.active_plugin_ids: set[str] = set()
         self.requested_skill_ids: set[str] = set()
         self.used_skill_ids: set[str] = set()
+        self._skill_utility_provider: Callable[[str, str], float] | None = None
 
     def set_run_context(
         self,
@@ -150,6 +153,23 @@ class AgentScopeRunner:
     ) -> None:
         self.active_plugin_ids = {plugin_id} if isinstance(plugin_id, str) else set(plugin_id)
         self.requested_skill_ids = set(requested_skill_ids or [])
+
+    def set_skill_utility_provider(
+        self,
+        provider: Callable[[str, str], float] | None,
+    ) -> None:
+        """Attach the privacy-minimized online skill utility signal."""
+        self._skill_utility_provider = provider
+
+    def _skill_utility(self, skill_id: str, risk_level: str) -> float:
+        if self._skill_utility_provider is None:
+            return 1.0
+        try:
+            value = float(self._skill_utility_provider(skill_id, risk_level))
+        except (TypeError, ValueError):
+            return 1.0
+        bound = self.config.EVOLUTION_SKILL_RANKING_BOUND
+        return min(1.0 + bound, max(1.0 - bound, value))
 
     def _model(self, role: str) -> CountingOpenAIChatModel:
         key = self.config.main_model_key.get_secret_value()
@@ -214,17 +234,32 @@ class AgentScopeRunner:
                 }
             except (OSError, ValueError, TypeError):
                 states = {}
-        selected: list[Path] = []
+        selected: list[tuple[int, float, str, Path]] = []
         for skill_name in ROLE_SKILLS.get(role, []):
             path = skill_root / skill_name
             if path.is_dir() and states.get(skill_name, {}).get("status", "enabled") == "enabled":
-                selected.append(path)
+                try:
+                    post = frontmatter.load(path / "SKILL.md")
+                    risk_level = str(post.get("risk_level") or "routine")
+                except (OSError, ValueError, TypeError):
+                    risk_level = "routine"
+                priority = 3 if skill_name in SAFETY_CRITICAL_SKILLS else 2
+                selected.append(
+                    (
+                        priority,
+                        self._skill_utility(skill_name, risk_level),
+                        skill_name,
+                        path,
+                    ),
+                )
         for skill_md in sorted((skill_root / ".candidates").glob("**/SKILL.md")):
             try:
                 post = frontmatter.load(skill_md)
             except (OSError, ValueError, TypeError):
                 continue
             skill_id = str(post.get("name") or "")
+            risk_level = str(post.get("risk_level") or "routine")
+            dependencies = list(post.get("dependencies") or [])
             if states.get(skill_id, {}).get("status") != "enabled":
                 continue
             if self.requested_skill_ids and skill_id not in self.requested_skill_ids:
@@ -245,8 +280,44 @@ class AgentScopeRunner:
             except (OSError, ValueError, TypeError):
                 continue
             if evaluation.get("passed") and evaluation.get("checksum") == checksum:
-                selected.append(skill_md.parent)
-        return selected
+                offline_review_required = requires_offline_skill_review(
+                    risk_level=risk_level,
+                    dependencies=dependencies,
+                    capabilities=list(capabilities),
+                )
+                if offline_review_required:
+                    approval = evaluation.get("offline_approval")
+                    if (
+                        not isinstance(approval, dict)
+                        or approval.get("checksum") != checksum
+                        or not approval.get("reviewer")
+                    ):
+                        continue
+                utility = self._skill_utility(
+                    skill_id,
+                    "high" if offline_review_required else risk_level,
+                )
+                online_adaptation_allowed = not offline_review_required
+                explicitly_requested = skill_id in self.requested_skill_ids
+                if (
+                    online_adaptation_allowed
+                    and not explicitly_requested
+                    and utility < self.config.EVOLUTION_SKILL_AUTO_SUPPRESS_THRESHOLD
+                ):
+                    continue
+                selected.append(
+                    (
+                        4 if explicitly_requested else 1,
+                        utility,
+                        skill_id,
+                        skill_md.parent,
+                    ),
+                )
+        selected.sort(
+            key=lambda item: (item[0], item[1], item[2]),
+            reverse=True,
+        )
+        return [item[3] for item in selected]
 
     def _agent(self, role: str) -> ReActAgent:
         base_role = self._base_role(role)

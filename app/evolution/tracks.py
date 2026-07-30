@@ -11,12 +11,11 @@ from typing import Literal
 
 MutationTrack = Literal["mutable", "immutable"]
 
-# Preferences, presentation strategies and bounded retrieval/skill strategies.
+# Preferences, presentation strategies and other behavior that cannot redefine
+# a component's identity, authority or fail-safe semantics.
 MUTABLE_PREFIXES = (
     "app/runtime/strategies/",
     "app/knowledge/strategies/",
-    "app/services/memory_strategies/",
-    "skills/",
     "frontend/src/",
     "config/mutable/",
 )
@@ -28,6 +27,7 @@ IMMUTABLE_PREFIXES = (
     "app/knowledge/",
     "app/plugins/",
     "app/services/",
+    "skills/",
     "config/",
 )
 

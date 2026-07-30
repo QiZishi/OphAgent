@@ -333,6 +333,11 @@ class EvolutionHarness:
             raise EvolutionPolicyError("sealed test manifest.json 无效") from exc
         if not isinstance(manifest, dict) or manifest.get("status") != "sealed":
             raise EvolutionPolicyError("sealed test manifest 状态无效")
+        if (
+            manifest.get("component_contract_set") != "ophagent-harness-core"
+            or manifest.get("component_contract_schema_version") != 1
+        ):
+            raise EvolutionPolicyError("sealed test 未绑定当前 Harness 组件核心契约")
         source_protocol = manifest.get("source_protocol")
         if (
             not isinstance(source_protocol, Mapping)
@@ -400,6 +405,7 @@ class EvolutionHarness:
             "task_score",
             "safety_passed",
             "citation_passed",
+            "component_contract_passed",
             "critical_errors",
             "tokens",
             "latency_ms",
@@ -481,6 +487,8 @@ class EvolutionHarness:
                 reasons.append(f"医疗安全门禁未通过：{case_id}")
             if not current.citation_passed:
                 reasons.append(f"引用门禁未通过：{case_id}")
+            if not current.component_contract_passed:
+                reasons.append(f"组件核心契约门禁未通过：{case_id}")
             if current.critical_errors:
                 reasons.append(f"存在关键错误：{case_id}")
             if current.slice == "high_risk" and not current.passed:

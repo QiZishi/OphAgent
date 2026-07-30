@@ -22,6 +22,7 @@ from app.domain.models import (
     SkillRecord,
     utc_now,
 )
+from app.services.skill_policy import requires_offline_skill_review
 
 WORD_PATTERN = re.compile(r"[\u4e00-\u9fff]|[A-Za-z0-9]+")
 SKILL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,63}$")
@@ -141,6 +142,172 @@ class MemoryStore:
             records.append(record)
             atomic_json(self.path, [item.model_dump(mode="json") for item in records])
         return record
+
+    async def upsert_mutable(
+        self,
+        *,
+        user_id: int,
+        category: str,
+        content: str,
+        source: str,
+        key: str | None = None,
+        target: str | None = None,
+    ) -> tuple[MemoryRecord, str]:
+        """Create or update explicit low-authority preference/workspace memory."""
+        if category not in {"preference", "workspace"}:
+            raise ValueError("在线 Memory CRUD 只允许偏好和工作区记忆")
+        normalized = _normalize(content)
+        if not normalized:
+            raise ValueError("Memory 内容不能为空")
+        fingerprint = hashlib.sha256(
+            f"{user_id}:{category}:{normalized}".encode(),
+        ).hexdigest()
+        target_normalized = _normalize(target or "")
+        async with self._lock:
+            records = self._load()
+            existing_index: int | None = None
+            for index, item in enumerate(records):
+                if (
+                    item.user_id != user_id
+                    or item.category != category
+                    or item.status == "rejected"
+                ):
+                    continue
+                if key and item.key == key:
+                    existing_index = index
+                    break
+                if target_normalized and target_normalized in _normalize(item.content):
+                    existing_index = index
+                    break
+                if item.fingerprint == fingerprint:
+                    existing_index = index
+                    break
+            if existing_index is None:
+                record = MemoryRecord(
+                    user_id=user_id,
+                    category=category,
+                    content=content,
+                    source=source,
+                    key=key,
+                    fingerprint=fingerprint,
+                    status="confirmed",
+                    sensitivity="normal",
+                    confirmation_note="用户明确指令在线创建",
+                )
+                records.append(record)
+                action = "created"
+            else:
+                previous = records[existing_index]
+                if (
+                    _normalize(previous.content) == normalized
+                    and previous.status == "confirmed"
+                ):
+                    return previous, "unchanged"
+                record = previous.model_copy(
+                    update={
+                        "content": content,
+                        "source": source,
+                        "key": key or previous.key,
+                        "fingerprint": fingerprint,
+                        "status": "confirmed",
+                        "sensitivity": "normal",
+                        "conflicts_with": [],
+                        "confirmation_note": "用户明确指令在线更新",
+                        "updated_at": utc_now(),
+                    },
+                )
+                records[existing_index] = record
+                for index, item in enumerate(records):
+                    if record.id in item.conflicts_with:
+                        records[index] = item.model_copy(
+                            update={
+                                "conflicts_with": [
+                                    conflict
+                                    for conflict in item.conflicts_with
+                                    if conflict != record.id
+                                ],
+                            },
+                        )
+                action = "updated"
+            atomic_json(self.path, [item.model_dump(mode="json") for item in records])
+            return record, action
+
+    async def delete_mutable(
+        self,
+        *,
+        user_id: int,
+        category: str,
+        content: str = "",
+        key: str | None = None,
+        clear_all: bool = False,
+    ) -> list[MemoryRecord]:
+        """Delete only low-authority memories selected by explicit user intent."""
+        if category not in {"preference", "workspace"}:
+            raise ValueError("在线 Memory CRUD 只允许偏好和工作区记忆")
+        normalized = _normalize(content)
+        async with self._lock:
+            records = self._load()
+            removed = [
+                item
+                for item in records
+                if item.user_id == user_id
+                and item.category == category
+                and (
+                    clear_all
+                    or (key is not None and item.key == key)
+                    or (normalized and normalized in _normalize(item.content))
+                )
+            ]
+            if not removed:
+                return []
+            removed_ids = {item.id for item in removed}
+            retained = [
+                item.model_copy(
+                    update={
+                        "conflicts_with": [
+                            conflict
+                            for conflict in item.conflicts_with
+                            if conflict not in removed_ids
+                        ],
+                    },
+                )
+                for item in records
+                if item.id not in removed_ids
+            ]
+            atomic_json(self.path, [item.model_dump(mode="json") for item in retained])
+            return removed
+
+    async def purge_expired_mutable(self, user_id: int) -> list[MemoryRecord]:
+        """Remove expired preference/workspace memory while retaining clinical history."""
+        now = utc_now()
+        async with self._lock:
+            records = self._load()
+            removed = [
+                item
+                for item in records
+                if item.user_id == user_id
+                and item.category in {"preference", "workspace"}
+                and item.expires_at is not None
+                and item.expires_at <= now
+            ]
+            if not removed:
+                return []
+            removed_ids = {item.id for item in removed}
+            retained = [
+                item.model_copy(
+                    update={
+                        "conflicts_with": [
+                            conflict
+                            for conflict in item.conflicts_with
+                            if conflict not in removed_ids
+                        ],
+                    },
+                )
+                for item in records
+                if item.id not in removed_ids
+            ]
+            atomic_json(self.path, [item.model_dump(mode="json") for item in retained])
+            return removed
 
     async def update(self, memory_id: str, user_id: int, values: dict) -> MemoryRecord:
         async with self._lock:
@@ -271,8 +438,8 @@ class MemoryStore:
             score = 0.68 * overlap + 0.20 * recency + category_bonus
             utility = getattr(self.evolution, "memory_utility_factor", None)
             if callable(utility):
-                # Only repeatedly helpful non-clinical preferences may receive
-                # a small boost. Negative feedback never suppresses a memory.
+                # Non-clinical preference/workspace records may move only
+                # within a bounded ranking range; CRUD remains user-controlled.
                 score *= float(utility(record.id, record.category))
             # Category-scoped recalls deliberately include safety-critical
             # history even when a terse follow-up has little lexical overlap.
@@ -404,6 +571,14 @@ class SkillStore:
         except (OSError, ValueError, TypeError):
             return {}
 
+    @classmethod
+    def _requires_offline_review(cls, skill: SkillRecord) -> bool:
+        return requires_offline_skill_review(
+            risk_level=skill.risk_level.value,
+            dependencies=skill.dependencies,
+            capabilities=skill.capabilities,
+        )
+
     async def import_candidate(self, markdown: str) -> SkillRecord:
         if len(markdown.encode("utf-8")) > 100_000:
             raise ValueError("SKILL.md 超过 100 KB")
@@ -476,6 +651,7 @@ class SkillStore:
             "checksum": checksum,
             "evaluated_at": datetime.now(UTC).isoformat(),
             "passed": all(checks.values()),
+            "offline_review_required": self._requires_offline_review(skill),
             "checks": checks,
             "dependency_checks": dependency_checks,
             "scope": "结构、依赖与医疗安全静态回归；不等同于完整病例效果评测",
@@ -489,6 +665,30 @@ class SkillStore:
                 "checksum": checksum,
             }
             atomic_json(self.path, states)
+        return await self.list_by_id(skill_id)
+
+    async def approve_offline(self, skill_id: str, reviewer: str) -> SkillRecord:
+        """Bind trusted offline review to the exact validated Skill checksum."""
+        reviewer = reviewer.strip()
+        if not reviewer or len(reviewer) > 120:
+            raise ValueError("离线审批人标识不合法")
+        skill = await self.list_by_id(skill_id)
+        report = self._load_evaluation(skill_id)
+        path = self.config.resolve_path(skill.path) / "SKILL.md"
+        checksum = hashlib.sha256(path.read_bytes()).hexdigest()
+        if (
+            skill.status != "validated"
+            or not report.get("passed")
+            or report.get("checksum") != checksum
+        ):
+            raise ValueError("Skill 必须先通过与当前内容匹配的验证")
+        if self._requires_offline_review(skill):
+            report["offline_approval"] = {
+                "reviewer": reviewer,
+                "checksum": checksum,
+                "approved_at": datetime.now(UTC).isoformat(),
+            }
+            atomic_json(self.evaluation_dir / f"{skill_id}.json", report)
         return await self.list_by_id(skill_id)
 
     async def set_status(self, skill_id: str, status: str) -> SkillRecord:
@@ -506,6 +706,14 @@ class SkillStore:
                 or report.get("checksum") != checksum
             ):
                 raise ValueError("候选 skill 必须通过与当前内容匹配的评测")
+            if is_candidate and self._requires_offline_review(skill):
+                approval = report.get("offline_approval")
+                if (
+                    not isinstance(approval, dict)
+                    or approval.get("checksum") != checksum
+                    or not approval.get("reviewer")
+                ):
+                    raise ValueError("危险 Skill 必须经过绑定当前内容的离线人工审核")
         async with self._lock:
             states = self._states()
             previous = states.get(skill_id, {})

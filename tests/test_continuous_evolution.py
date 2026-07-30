@@ -103,7 +103,7 @@ async def test_rejected_memory_candidates_create_extraction_work_item(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_only_repeated_positive_feedback_boosts_nonclinical_memory(tmp_path):
+async def test_nonclinical_memory_utility_tracks_revised_feedback(tmp_path):
     controller = build_controller(tmp_path)
     memory_id = "mem_" + "b" * 32
     for index in range(3):
@@ -119,9 +119,10 @@ async def test_only_repeated_positive_feedback_boosts_nonclinical_memory(tmp_pat
         ]
         await controller.record_feedback(run, None, "up", events)
 
-    assert controller.memory_utility_factor(memory_id, "preference") > 1
+    boosted = controller.memory_utility_factor(memory_id, "preference")
+    assert boosted > 1
     assert controller.memory_utility_factor(memory_id, "medication") == 1
 
     run = build_run(0)
     await controller.record_feedback(run, "up", "down", events)
-    assert controller.memory_utility_factor(memory_id, "preference") == 1
+    assert 1 < controller.memory_utility_factor(memory_id, "preference") < boosted

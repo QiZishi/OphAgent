@@ -137,7 +137,7 @@ OphAgent is a full-stack Agent workspace for ophthalmic research and clinical as
 | **Security built in** | Red-flag rules, attachment ownership, idempotency, budgets, cancellation, coordinate validation and source gates span the execution path. |
 | **Multimodal and parallel** | Fundus, OCT, anterior-segment images, PDFs, text and audio enter a typed DAG whose relevant nodes can execute concurrently. |
 | **Extensible** | Three professional plugins, gated `SKILL.md` packages, memory, OpenAI-compatible providers and external tools share composable contracts. |
-| **Controlled self-evolution** | Content-free feedback becomes an offline candidate that passes isolated worktree, paired evaluation, sealed test, trusted approval and atomic release gates. |
+| **Controlled self-evolution** | Low-authority Memory CRUD and validated low-risk Skill utility adapt online; content, permissions, safety and other risky changes pass isolated offline evaluation and trusted approval. |
 | **Available everywhere** | A responsive React workspace covers desktop and mobile, with projects, files, knowledge, skills and settings in one place. |
 
 <details>
@@ -327,12 +327,13 @@ The public UI presents concise stage summaries, validated outputs and evidence w
 
 ## Self-Evolution Harness
 
-OphAgent separates online learning signals from production changes through two governed loops. `ContinuousEvolutionController` aggregates content-free run outcomes, explicit feedback and memory-governance actions. `EvolutionHarness` creates, freezes, evaluates and promotes candidates inside an offline isolated environment. Every evolution is bound to a baseline commit, candidate commit, case set, approval record, release reference and audit event.
+OphAgent separates bounded online adaptation from risky production changes. `ContinuousEvolutionController` applies explicit CRUD to low-authority preference/workspace Memory and continuously updates bounded utility for those memories and validated low-risk Skills. `EvolutionHarness` creates, freezes, evaluates and promotes content, code, permission and high-risk candidates inside an offline isolated environment. Every component also has an immutable core contract covering its identity, responsibility, authority, input/output semantics and fail-safe mechanisms.
 
 ```mermaid
 flowchart TB
     OUTCOME["Online outcomes<br/>Run status · explicit feedback · memory governance"]
     SIGNAL["Privacy-minimized signals<br/>hashed fingerprint · route · plugins/skills · cost"]
+    ONLINE["Bounded online adaptation<br/>Memory CRUD · Memory/Skill utility"]
     CANDIDATE["Bounded candidates<br/>runtime · skill · memory retrieval/extraction"]
     PROPOSAL["EvolutionProposal<br/>failure cluster · allowlisted paths · risk · activation"]
     ISOLATE["Isolated Git worktree<br/>bound to base commit"]
@@ -345,6 +346,7 @@ flowchart TB
     EXPERIENCE["Audit and experience<br/>verifiable release · atomic rollback"]
 
     OUTCOME --> SIGNAL
+    SIGNAL --> ONLINE
     SIGNAL --> CANDIDATE
     CANDIDATE --> PROPOSAL
     PROPOSAL --> ISOLATE
@@ -360,14 +362,16 @@ flowchart TB
 | Stage | Harness implementation |
 |---|---|
 | Online signals | Stores Run fingerprints, status, risk, route, plugins/skills, error codes, warning counts, tokens, explicit votes and memory-governance actions; patient queries, answers, attachments, evidence text and user identifiers remain outside evolution signals |
-| Bounded adaptation | Confirmed non-clinical preference and workspace memories can receive at most a 15% retrieval boost from repeated positive feedback; other improvements become offline candidates |
-| Mutation boundary | Candidates can modify only declared paths under `app/runtime/`, `app/knowledge/`, `app/plugins/`, `app/services/`, `skills/`, `frontend/src/` and `config/` |
+| Bounded adaptation | Explicit preference/workspace Memory supports online create, update, delete and expiry; its utility and validated low-risk Skill selection utility move within configured bounds as feedback changes |
+| Immutable mechanism | Memory CRUD, provenance, confirmation, conflict handling, clinical protection and user correction/deletion guarantees cannot evolve online |
+| Component contracts | `config/immutable/harness_component_contracts.yaml` defines what each component is, which mechanisms make it useful and which state may evolve online |
+| Mutation boundary | Mutable strategy paths and immutable control-plane paths cannot share a proposal; built-in Skill definitions, Memory mechanisms, permissions, safety and business rules remain offline-gated |
 | Isolation and freeze | Every proposal receives an independent Git worktree; the Harness validates the diff, declared paths and workspace state before pinning one candidate commit |
 | Paired evaluation | Baseline and candidate use identical case IDs and report routine, complex and high-risk slices separately |
 | Sealed test | Cases and manifest live outside the repository and candidate worktree, with one-shot release evaluation, complete slices, mandatory metrics and controller-issued HMAC attestations |
-| Promotion criteria | Mean gain reaches its threshold with a non-negative 95% confidence-interval lower bound; every slice is non-regressive, high-risk cases do not lose score, and safety, citation and critical-error gates pass |
+| Promotion criteria | Mean gain reaches its threshold with a non-negative 95% confidence-interval lower bound; every slice is non-regressive, high-risk cases do not lose score, and safety, citation, component-contract and critical-error gates pass |
 | Resource gates | The default candidate token-ratio ceiling is 1.15 and the latency-ratio ceiling is 1.20 |
-| Approval and release | A signed human approval binds both proposal and candidate commit; a `git update-ref` transaction atomically updates the release ref and active ref |
+| Approval and release | Immutable/high-risk changes always require signed human approval bound to the candidate commit; release refs update atomically |
 | Rollback and audit | Rollback targets are restricted to frozen releases; proposals, evaluations, approvals, promotions, rollbacks and de-identified experience remain auditable |
 
 The Harness can connect to official **A-Evolve**, **GEPA** and **Adaptive Auto-Harness** packages through `requirements-evolution.txt`. The local adapters handle capability detection and governed invocation while promotion continues through OphAgent safety gates.
@@ -406,7 +410,7 @@ Inspect live signals and candidate status through the authenticated `GET /api/v1
 | Agent runtime | AgentScope 1.0 ReAct roles, deterministic routing and typed async DAG execution |
 | Persistence | SQLModel conversation/account database + SQLite WAL runtime event store |
 | Knowledge | BM25, NumPy vector persistence, OpenAI-compatible embeddings/Rerank, PDF page evidence, OphthaGraph |
-| Self-evolution | Content-free online signals, isolated Git worktrees, paired/sealed evaluation, HMAC attestations and atomic release refs |
+| Self-evolution | Online Memory CRUD and bounded Memory/Skill utility plus isolated offline worktrees, paired/sealed evaluation, HMAC attestations and atomic release refs |
 | Observability | OpenTelemetry with export-time privacy filtering |
 | Quality | Pytest, Vitest, ESLint, Ruff, Playwright and axe accessibility checks |
 

@@ -1,9 +1,8 @@
-"""Privacy-minimized feedback loop for bounded, offline-gated evolution.
+"""Privacy-minimized online adaptation with offline gates for risky changes.
 
-The online runtime may learn only a small ranking adjustment for already
-confirmed memories. Skill, prompt, routing and code changes are emitted as
-content-free candidate work items and can only advance through the isolated
-EvolutionHarness.
+The online runtime learns bounded utility adjustments for confirmed,
+non-clinical memories and already validated low-risk skills. Content, code,
+permissions, clinical facts and safety-policy changes remain offline-gated.
 """
 
 from __future__ import annotations
@@ -36,6 +35,7 @@ TERMINAL = {
     RunStatus.CANCELLED,
     RunStatus.INTERRUPTED,
 }
+PROTECTED_SKILLS = {"red_flag_triage"}
 
 
 def _safe(value: str | None, fallback: str = "unknown") -> str:
@@ -52,7 +52,7 @@ class ContinuousEvolutionController:
 
     No query, answer, attachment, evidence text, user identifier or clinical
     field is persisted here. This controller never edits production code,
-    prompts, skills, models, medical facts or safety policy.
+    skill content, models, medical facts, permissions or safety policy.
     """
 
     SCHEMA_VERSION = 1
@@ -243,11 +243,11 @@ class ContinuousEvolutionController:
             self._save(state)
 
     def memory_utility_factor(self, memory_id: str, category: str) -> float:
-        """Only boost repeatedly helpful non-clinical preferences.
+        """Continuously adapt low-authority non-clinical memory utility.
 
         Clinical history, medications and allergies are never re-ranked from
-        coarse answer-level feedback. Negative feedback creates an offline
-        candidate but never demotes an active memory.
+        coarse answer-level feedback. Preference/workspace memory can move
+        within a bounded range in either direction as explicit feedback changes.
         """
         if category not in {"preference", "workspace"}:
             return 1.0
@@ -269,14 +269,42 @@ class ContinuousEvolutionController:
         if sample_size < self.config.EVOLUTION_MIN_FEEDBACK_SAMPLES:
             return 1.0
         rate = (positives + 2) / (sample_size + 4)
-        if rate < self.config.EVOLUTION_POSITIVE_RATE_THRESHOLD:
-            return 1.0
         bound = self.config.EVOLUTION_MEMORY_RANKING_BOUND
-        excess = (
-            (rate - self.config.EVOLUTION_POSITIVE_RATE_THRESHOLD)
-            / max(1.0 - self.config.EVOLUTION_POSITIVE_RATE_THRESHOLD, 0.01)
+        adjustment = bound * (
+            (rate - 0.5)
+            / 0.5
         )
-        return min(1.0 + bound, 1.0 + bound * excess)
+        return min(1.0 + bound, max(1.0 - bound, 1.0 + adjustment))
+
+    def skill_utility_factor(
+        self,
+        skill_id: str,
+        risk_level: str = "routine",
+    ) -> float:
+        """Adapt selection utility for validated low-risk skills only.
+
+        Safety-critical, high-risk and emergency skills stay at neutral utility;
+        changing their content or activation requires the offline review path.
+        """
+        if skill_id in PROTECTED_SKILLS or risk_level in {"high", "emergency"}:
+            return 1.0
+        positives = 0
+        negatives = 0
+        safe_id = _safe(skill_id)
+        for record in self._load().get("feedback_by_run", {}).values():
+            if safe_id not in record.get("skills", []):
+                continue
+            if record.get("value") == "up":
+                positives += 1
+            elif record.get("value") == "down":
+                negatives += 1
+        sample_size = positives + negatives
+        if sample_size < self.config.EVOLUTION_MIN_FEEDBACK_SAMPLES:
+            return 1.0
+        rate = (positives + 2) / (sample_size + 4)
+        bound = self.config.EVOLUTION_SKILL_RANKING_BOUND
+        adjustment = bound * ((rate - 0.5) / 0.5)
+        return min(1.0 + bound, max(1.0 - bound, 1.0 + adjustment))
 
     @staticmethod
     def _candidate_id(kind: str, target: str) -> str:
@@ -366,11 +394,15 @@ class ContinuousEvolutionController:
                 for item in candidates
             ),
             memory_adaptation=(
-                "仅对重复获得正反馈的已确认偏好做有界增益（+"
+                "已确认偏好/工作区记忆随显式反馈在线双向调整（±"
                 f"{self.config.EVOLUTION_MEMORY_RANKING_BOUND:.0%}）；"
-                "临床记忆不按粗粒度反馈重排，负反馈不降权"
+                "临床记忆不按粗粒度反馈重排"
             ),
-            skill_adaptation="只生成去内容化候选；隔离评测并经人工批准后才可晋升",
+            skill_adaptation=(
+                "已验证低风险 Skill 随显式反馈在线排序/有界抑制（±"
+                f"{self.config.EVOLUTION_SKILL_RANKING_BOUND:.0%}）；"
+                "Skill 内容、权限及高风险变更仍需离线审核"
+            ),
             production_mutation="disabled",
             human_approval_required=self.config.EVOLUTION_REQUIRE_HUMAN_APPROVAL,
             candidates=candidates,

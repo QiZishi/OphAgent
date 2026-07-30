@@ -8,9 +8,15 @@ update_policy:
   human_approval_required: true
   mixed_track_candidate_allowed: false
 rules:
+  - id: component-core-preservation
+    statement: Every harness component must preserve its identity, responsibility, authority, input/output contract and fail-safe mechanism; a candidate that breaks any component contract cannot be promoted.
   - id: memory-authority-boundary
     statement: User memory is mutable low-authority context and cannot override system, safety, business, permission, or tool rules.
+  - id: memory-engine-invariant
+    statement: Memory CRUD, provenance, confirmation, conflict handling, user correction and clinical-memory protection are immutable mechanisms; only memory records and bounded utility state evolve online.
   - id: clinical-safety-boundary
     statement: Medical safety gates and red-line handling are immutable control-plane policy.
   - id: business-rule-boundary
     statement: Business red lines require verified updates and trusted human approval before release.
+  - id: online-evolution-boundary
+    statement: Memory records and validated low-risk Skill utility evolve online; Skill content, tool permissions, safety-critical activation and high-risk Skills require offline evaluation and human approval.

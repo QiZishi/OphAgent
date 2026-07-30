@@ -50,8 +50,12 @@ def test_paths_are_explicitly_separated_and_mixed_candidates_are_rejected(tmp_pa
     base = git(repo, "rev-parse", "HEAD")
 
     assert classify_candidate_path("app/runtime/strategies/tone.py") == "mutable"
-    assert classify_candidate_path("skills/concise/SKILL.md") == "mutable"
+    assert classify_candidate_path("skills/concise/SKILL.md") == "immutable"
     assert classify_candidate_path("app/runtime/safety.py") == "immutable"
+    assert (
+        classify_candidate_path("app/services/memory_strategies/ranking.py")
+        == "immutable"
+    )
     assert classify_candidate_path("config/immutable/refund.yaml") == "immutable"
     assert classify_candidate_paths(["app/runtime/"]) == "immutable"
 
@@ -178,3 +182,61 @@ def test_immutable_policy_manifest_declares_non_bypassable_review():
         "mixed_track_candidate_allowed": False,
     }
     json.dumps(manifest)
+
+
+def test_harness_components_have_immutable_core_contracts():
+    manifest = yaml.safe_load(
+        (
+            Path(__file__).parents[1]
+            / "config"
+            / "immutable"
+            / "harness_component_contracts.yaml"
+        ).read_text("utf-8"),
+    )
+    assert manifest["governance_track"] == "immutable"
+    assert manifest["update_policy"]["contract_update_allowed_online"] is False
+    assert manifest["update_policy"]["sealed_contract_evaluation_required"] is True
+    components = manifest["components"]
+    assert {item["id"] for item in components} >= {
+        "orchestration",
+        "routing",
+        "agent_runtime",
+        "conversation_context",
+        "memory",
+        "skill",
+        "knowledge_retrieval",
+        "safety",
+        "tools_and_plugins",
+        "evolution",
+        "observability",
+    }
+    for component in components:
+        assert component["core_definition"].strip()
+        assert component["essential_mechanisms"]
+        assert isinstance(component["online_mutable_state"], list)
+
+
+def test_component_contract_failure_blocks_promotion_decision(tmp_path):
+    harness, _ = build_harness(tmp_path)
+    baseline_cases = cases()
+    candidate_cases = cases(delta=0.1)
+    candidate_cases[0] = candidate_cases[0].model_copy(
+        update={"component_contract_passed": False},
+    )
+    baseline = EvaluationRunResult(
+        proposal_id="evo_" + "f" * 32,
+        variant="baseline",
+        phase="sealed_test",
+        commit="a" * 40,
+        cases=baseline_cases,
+    )
+    candidate = baseline.model_copy(
+        update={
+            "variant": "candidate",
+            "commit": "b" * 40,
+            "cases": candidate_cases,
+        },
+    )
+    decision = harness.decide(baseline, candidate)
+    assert not decision.accepted
+    assert any("组件核心契约" in reason for reason in decision.reasons)

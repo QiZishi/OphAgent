@@ -2,7 +2,9 @@
 
 本模块包含两部分：`continuous.py` 在线记录去内容化结果与反馈，`harness.py` 离线负责候选隔离、不可变评测记录、确定性配对门禁、人工审批、release ref 与回滚。`tracks.py` 将偏好/策略类更新与安全、业务和 Harness 控制面分轨；混轨候选直接拒绝，不可变轨即使关闭普通候选审批也必须经过可信人工审批。
 
-在线环节不保存 query、answer、附件、证据正文、用户 ID 或临床字段。它只允许对重复获得正反馈的、已经确认的非临床偏好做默认最高 +15% 的 Bayesian-smoothed 召回增益；临床病史、用药和过敏不按粗粒度回答反馈重排，负反馈也不会降低任何 Memory 的权重。系统不能自动确认、改写、删除或屏蔽医疗事实。重复 Skill 负反馈、Memory 候选拒绝、召回负反馈和技术错误只会生成 `ready_for_offline_evaluation` 候选，不会在线改写代码、Prompt 或 `SKILL.md`。
+`config/immutable/harness_component_contracts.yaml` 定义每个 Harness 组件“是什么、必须做什么、哪些状态允许在线变化”。sealed suite 必须绑定该 contract set 和 schema；组件的身份、职责、权限、输入输出语义和失效保护属于不可变核心，候选即使总分更高，只要 `component_contract_passed` 未通过也禁止晋升。仓库内置 Skill 定义属于核心实现并走离线轨，运行时隔离区中的已验证低风险 Skill 生命周期与选择效用可以在线变化，危险能力仍需离线人工审核。
+
+在线环节不保存 query、answer、附件、证据正文、用户 ID 或临床字段。用户明确表达的偏好/工作区 Memory 可在线新增、更新、删除和过期清理，其效用随显式反馈在有界范围内双向调整；已验证低风险 Skill 同样在线调整选择效用。临床病史、用药和过敏不按粗粒度回答反馈重排，也不能由模型自动确认或删除。Memory CRUD、来源、确认、冲突、临床保护与用户纠正能力属于不可变机制；Skill 内容、工具权限和高风险激活也不能在线改写，相关变更只生成 `ready_for_offline_evaluation` 候选。
 
 离线候选必须声明失败簇、修改白名单、预期行为、风险和激活条件。每个候选使用独立 Git worktree；`tests/`、凭据、审计、sealed data、发布门禁、认证和可观测性均禁止修改。晋升只接受同病例配对的 sealed-test 结果，并检查 95% 置信区间、普通/复杂/高风险全切片非劣、已通过单病例不失败、高风险单病例不降分、Token 与延迟。
 
