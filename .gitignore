@@ -25,3 +25,8 @@ data/knowledge_base/index/
 *.db-wal
 /ophthalmic_plugin_test_cases
 MEDICAL_AGENT_SYSTEM_OPTIMIZATION_GUIDE.md
+
+# Local-only documentation and project overview
+/docs/*
+!/docs/.gitkeep
+/OphVLM-R1项目总览.md

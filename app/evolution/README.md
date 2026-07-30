@@ -20,5 +20,4 @@ sealed-test 必须位于仓库与候选 worktree 之外，并提供 `manifest.js
 
 本机可用 `scripts/install_official_evolution.sh` 从 `medical_agent_hust/evolution/upstream` 的固定官方源码安装；未安装时状态为 `unavailable`，不会启用同名简化优化器。可选依赖见 `requirements-evolution.txt`。
 
-设计与研究依据见 [`docs/SELF_EVOLUTION_HARNESS_RESEARCH.md`](../../docs/SELF_EVOLUTION_HARNESS_RESEARCH.md)。
-其他 Agent 系统的审计与实施步骤见 [`docs/DUAL_TRACK_EVOLUTION_GUIDE.md`](../../docs/DUAL_TRACK_EVOLUTION_GUIDE.md)。
+双轨边界以 `tracks.py`、不可变策略清单和回归测试为准；本地研究文档不进入 Git 仓库。
