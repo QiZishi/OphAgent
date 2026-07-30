@@ -69,11 +69,18 @@ function TurnGroup({
   const root = versions[0];
   const events = eventsByRun[run.id] || [];
   const evidence = uniqueEvidence(events
-    .filter((event) => event.type === "retrieval.result")
+    .filter((event) =>
+      event.type === "retrieval.result"
+      && Number(event.data.execution_revision ?? 1) === run.execution_revision
+    )
     .flatMap((event) => (event.data.evidence as Evidence[] | undefined) || []));
   const artifacts = artifactsByRun[run.id] || [];
   const streamedAnswer = events
-    .filter((event) => event.type === "answer.delta")
+    .filter((event) =>
+      event.type === "answer.delta"
+      && Number(event.data.output_revision ?? event.data.execution_revision ?? 1)
+        === run.execution_revision
+    )
     .sort((a, b) => a.sequence - b.sequence)
     .map((event) => String(event.data.delta || ""))
     .join("");
@@ -82,6 +89,12 @@ function TurnGroup({
   const userAttachments = root.input.attachment_ids
     .map((id) => attachmentsById[id])
     .filter(Boolean);
+  const originalQuery = root.input.query.split(
+    "\n\n【用户在执行期间追加的要求；后续步骤必须遵循】"
+  )[0];
+  const visibleInterventions = (run.interventions || []).filter(
+    (item) => item.status !== "cancelled"
+  );
 
   return (
     <section className="turn">
@@ -105,9 +118,21 @@ function TurnGroup({
               ))}
             </div>
           )}
-          <p>{root.input.query}</p>
+          <p>{originalQuery}</p>
         </div>
       </div>
+      {visibleInterventions.map((item) => (
+        <div className="user-bubble intervention-message" key={item.id}>
+          <div className="user-message">
+            <small>
+              {item.mode === "interrupt" ? "立即打断并追加" : "排队追加"}
+              {item.status === "queued" ? " · 等待处理" : " · 已应用"}
+            </small>
+            {item.content && <p>{item.content}</p>}
+            {!item.content && <p>追加了 {item.attachment_ids.length} 个附件</p>}
+          </div>
+        </div>
+      ))}
       <div className="assistant-turn">
         <div className="assistant-mark"><img src="/static/icons/system_logo.png" alt="" /></div>
         <div className="assistant-body">
@@ -252,12 +277,12 @@ function LocalizationResult({ image, regions }: { image: AttachmentRecord; regio
   return (
     <section className="localization-result">
       <header>
-        <div><span>病灶定位 · {image.original_filename}</span><h3>{regions.length ? "经校验的可疑区域" : "未形成坐标标注"}</h3></div>
+        <div><span>病灶定位 · {image.original_filename}</span><h3>{regions.length ? "可疑区域" : "未形成坐标标注"}</h3></div>
         <small>{regions.length} 个区域</small>
       </header>
       {!regions.length && (
         <p className="localization-empty">
-          多模态组件已读取上传影像，但没有返回通过坐标校验的区域。系统未补造病灶边界。
+          本次未获得可显示的坐标定位；下方仅呈现影像观察。
         </p>
       )}
       <div className={`localized-image ${regions.length ? "" : "no-regions"}`}>

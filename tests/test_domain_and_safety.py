@@ -5,7 +5,11 @@ from app.plugins.registry import plugin_registry
 from app.runtime.planning import build_plan
 from app.runtime.routing import route_task
 from app.runtime.safety import apply_red_flag_gate, validate_public_medical_output
-from app.tools.capabilities import CapabilityClients
+from app.tools.capabilities import (
+    CapabilityClients,
+    _normalize_image_analysis_payload,
+    _parse_image_analysis_content,
+)
 
 
 def test_red_flag_gate_escalates_acute_vision_loss():
@@ -196,6 +200,42 @@ def test_normalized_region_cannot_escape_image():
             coordinate_space="normalized",
             confidence=0.8,
         )
+
+
+def test_image_analysis_normalizes_single_item_array_response():
+    normalized = _normalize_image_analysis_payload([
+        {
+            "summary": "眼底观察",
+            "observations": ["视盘杯盘比较大"],
+            "limitations": ["图像清晰度有限"],
+            "uncertainty": "需结合眼压",
+            "regions": [],
+        }
+    ])
+
+    assert normalized["summary"] == "眼底观察"
+    assert normalized["observations"] == ["视盘杯盘比较大"]
+    assert normalized["regions"] == []
+
+
+def test_image_analysis_merges_multi_image_array_response():
+    normalized = _normalize_image_analysis_payload([
+        {"summary": "图一", "observations": ["观察一"], "regions": [{"image_id": "a"}]},
+        {"summary": "图二", "observations": "观察二", "limitations": "视野图需复核"},
+    ])
+
+    assert normalized["summary"] == "图一\n图二"
+    assert normalized["observations"] == ["观察一", "观察二"]
+    assert normalized["limitations"] == ["视野图需复核"]
+    assert normalized["regions"] == [{"image_id": "a"}]
+
+
+def test_image_analysis_keeps_non_json_observation_instead_of_failing_run():
+    normalized = _parse_image_analysis_content("可见视盘杯盘比较大，图像边缘略模糊。")
+
+    assert normalized["summary"] == "可见视盘杯盘比较大，图像边缘略模糊。"
+    assert normalized["observations"]
+    assert normalized["regions"] == []
 
 
 def test_public_medical_output_blocks_diagnosis_probability_and_direct_medication_change():

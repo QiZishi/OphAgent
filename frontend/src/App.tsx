@@ -25,8 +25,10 @@ const TERMINAL = new Set(["completed", "completed_with_warnings", "interrupted",
 const EVENT_TYPES = [
   "run.created", "safety.alert", "plan.created", "plan.updated", "agent.started",
   "agent.completed", "tool.started", "tool.completed", "tool.failed", "retrieval.result",
-  "artifact.created", "context.prepared", "memory.recalled", "memory.proposed", "answer.delta", "answer.completed",
-  "run.question", "run.approval_required", "run.interrupted", "run.failed", "run.cancelled", "run.completed"
+    "artifact.created", "context.prepared", "memory.recalled", "memory.proposed", "answer.delta", "answer.completed",
+    "user.intervention_queued", "user.interrupt_requested", "user.intervention_applied",
+    "user.intervention_cancelled", "run.resumed", "run.question", "run.approval_required",
+    "run.interrupted", "run.failed", "run.cancelled", "run.completed"
 ];
 
 function Login({ onSuccess }: { onSuccess: (profile: UserProfile) => void }) {
@@ -70,7 +72,6 @@ function Login({ onSuccess }: { onSuccess: (profile: UserProfile) => void }) {
         <button className="login-switch" onClick={() => { setRegister((value) => !value); setError(""); }}>
           {register ? "已有账号？登录" : "还没有账号？创建一个"}
         </button>
-        <p className="login-disclaimer">研究级诊疗增强，不替代医生诊断与急诊评估。</p>
       </section>
       <aside className="login-aside" aria-hidden="true">
         <div className="clinical-line" />
@@ -97,6 +98,7 @@ export default function App() {
   const [plugins, setPlugins] = useState<PluginId[]>([]);
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
+  const [interventionMode, setInterventionMode] = useState<"interrupt" | "queue">("queue");
   const [attachmentsById, setAttachmentsById] = useState<Record<string, AttachmentRecord>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -223,6 +225,36 @@ export default function App() {
     const source = new EventSource(`/api/v1/runs/${run.id}/events/stream?after_sequence=${cursor}`, { withCredentials: true });
     sourceRef.current = source;
     setConnectionNote("");
+    async function reconcileTerminal(updated: Run) {
+      if (!TERMINAL.has(updated.status)) return false;
+      source.close();
+      setSubmitting(false);
+      setConnectionNote("");
+      const [finalEvents, artifacts] = await Promise.all([
+        api.runEvents(run.id, cursorRef.current[run.id] || 0),
+        api.artifacts(run.id)
+      ]);
+      if (activeIdRef.current !== conversationId) return true;
+      if (finalEvents.length) {
+        setEventsByRun((current) => {
+          const previous = current[run.id] || [];
+          const known = new Set(previous.map((item) => item.sequence));
+          return {
+            ...current,
+            [run.id]: [
+              ...previous,
+              ...finalEvents.filter((item) => !known.has(item.sequence))
+            ].sort((left, right) => left.sequence - right.sequence)
+          };
+        });
+        cursorRef.current[run.id] = Math.max(
+          cursorRef.current[run.id] || 0,
+          finalEvents.at(-1)?.sequence || 0
+        );
+      }
+      setArtifactsByRun((current) => ({ ...current, [run.id]: artifacts }));
+      return true;
+    }
     EVENT_TYPES.forEach((type) => {
       source.addEventListener(type, async (message) => {
         if (activeIdRef.current !== conversationId) return;
@@ -240,13 +272,7 @@ export default function App() {
           if (updated.status === "waiting_for_user") {
             setSubmitting(false);
           }
-          if (TERMINAL.has(updated.status)) {
-            source.close();
-            setSubmitting(false);
-            setConnectionNote("");
-            const artifacts = await api.artifacts(run.id);
-            setArtifactsByRun((current) => ({ ...current, [run.id]: artifacts }));
-          }
+          await reconcileTerminal(updated);
         }
       });
     });
@@ -257,11 +283,7 @@ export default function App() {
       try {
         const updated = await api.getRun(run.id);
         updateRun(updated, conversationId);
-        if (TERMINAL.has(updated.status)) {
-          setConnectionNote("");
-          setSubmitting(false);
-          return;
-        }
+        if (await reconcileTerminal(updated)) return;
       } catch {
         // The backoff below keeps the server run authoritative.
       }
@@ -353,31 +375,34 @@ export default function App() {
       const running = [...(conversation.runs || [])].reverse().find(
         (run) => !TERMINAL.has(run.status) && run.status !== "waiting_for_user"
       );
-      if (running) {
-        const cancelled = await api.cancelRun(running.id);
-        updateRun(cancelled, conversation.id);
-        sourceRef.current?.close();
-      }
       const submittedText = text || "请分析我上传的附件。";
       const nextRun = waiting
         ? await api.provideRunInput(waiting.id, text, uploadedIds)
-        : (await api.createMessage(conversation.id, submittedText, uploadedIds, plugins, selectedSkills)).run;
+        : running
+          ? await api.interveneRun(running.id, {
+              mode: interventionMode,
+              content: submittedText,
+              attachment_ids: uploadedIds,
+              expected_attempt: running.attempt,
+              client_message_id: crypto.randomUUID()
+            })
+          : (await api.createMessage(conversation.id, submittedText, uploadedIds, plugins, selectedSkills)).run;
       setActive((current) => current ? {
         ...current,
         title: current.runs?.length ? current.title : submittedText.slice(0, 40),
-        runs: waiting
+        runs: waiting || running
           ? (current.runs || []).map((run) => run.id === nextRun.id ? nextRun : run)
           : [...(current.runs || []), nextRun]
       } : current);
-      if (!waiting && !(conversation.runs || []).length) {
+      if (!waiting && !running && !(conversation.runs || []).length) {
         const renamed = await api.updateConversation(conversation.id, { title: submittedText.slice(0, 40) });
         setConversations((current) => current.map((item) => item.id === renamed.id ? renamed : item));
       }
       attachments.forEach((item) => item.preview && URL.revokeObjectURL(item.preview));
       setAttachments([]);
       setDraft("");
-      if (!waiting) setPlugins([]);
-      if (!waiting) setSelectedSkills([]);
+      if (!waiting && !running) setPlugins([]);
+      if (!waiting && !running) setSelectedSkills([]);
       // `submitting` only represents the short HTTP/upload transaction. The
       // background run has its own `running` state, so users can interrupt or
       // redirect a long medical workflow from the same composer.
@@ -482,7 +507,11 @@ export default function App() {
     [conversations, search]
   );
   const runs = active?.runs || [];
-  const running = runs.some((run) => !TERMINAL.has(run.status));
+  const activeExecutingRun = [...runs].reverse().find(
+    (run) => run.status === "queued" || run.status === "running"
+  );
+  const running = Boolean(activeExecutingRun);
+  const busy = runs.some((run) => !TERMINAL.has(run.status));
   const latestArtifact = Object.values(artifactsByRun).flat().at(-1) || null;
   const latestAnswer = [...runs].reverse().find((run) => run.answer)?.answer || "";
   const asrAvailable = capabilities.some((capability) =>
@@ -495,7 +524,7 @@ export default function App() {
   if (checkingAuth) return <div className="app-loader"><img src="/static/icons/system_logo.png" alt="" /><LoadingDots label="加载工作区" /></div>;
   if (!profile) return <Login onSuccess={async (nextProfile) => {
     setProfile(nextProfile);
-    const [, nextCapabilities, nextSkills, storedAttachments] = await Promise.all([
+    const [items, nextCapabilities, nextSkills, storedAttachments] = await Promise.all([
       loadConversations(),
       api.capabilities().catch(() => []),
       api.skills().catch(() => []),
@@ -504,6 +533,7 @@ export default function App() {
     setCapabilities(nextCapabilities);
     setSkills(nextSkills);
     setAttachmentsById(Object.fromEntries(storedAttachments.map((item) => [item.id, item])));
+    if (items[0]) await openConversation(items[0].id);
   }} />;
 
   return (
@@ -586,7 +616,7 @@ export default function App() {
           <button className="icon-button mobile-menu" onClick={() => setMobileNav(true)} aria-label="打开导航"><Menu size={20} /></button>
           <div className="conversation-title">
             <h1>{active?.title || "新对话"}</h1>
-            <span>{running ? "OphAgent 正在处理" : "OphAgent"}</span>
+            <span>{busy ? "OphAgent 正在处理" : "OphAgent"}</span>
           </div>
           <div className="topbar-actions">
             {runs.some((run) => run.risk_level === "emergency") && <span className="risk-badge"><ShieldAlert size={15} />红旗提示</span>}
@@ -629,6 +659,10 @@ export default function App() {
           selectedSkills={selectedSkills}
           submitting={submitting}
           running={running}
+          interventionMode={interventionMode}
+          queuedInterventions={(activeExecutingRun?.interventions || []).filter(
+            (item) => item.mode === "queue" && item.status === "queued"
+          )}
           onValue={setDraft}
           onFiles={addFiles}
           onRemoveFile={(key) => setAttachments((current) => {
@@ -640,6 +674,16 @@ export default function App() {
           onToggleSkill={(id) => setSelectedSkills((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])}
           onSubmit={send}
           onStop={stopCurrent}
+          onInterventionMode={setInterventionMode}
+          onCancelIntervention={async (id) => {
+            if (!active || !activeExecutingRun) return;
+            try {
+              const updated = await api.cancelRunIntervention(activeExecutingRun.id, id);
+              updateRun(updated, active.id);
+            } catch (reason) {
+              setError(reason instanceof Error ? reason.message : "无法取消排队要求");
+            }
+          }}
           onTranscribe={async (file) => (await api.transcribeAudio(file)).text}
           onSpeak={(text, signal) => api.synthesizeSpeech(text, undefined, signal)}
           asrAvailable={asrAvailable}

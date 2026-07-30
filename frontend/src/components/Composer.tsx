@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { PLUGINS } from "../features/plugins";
-import type { AttachmentRecord, LocalAttachment, PluginId, SkillRecord } from "../types";
+import type { AttachmentRecord, LocalAttachment, PluginId, RunIntervention, SkillRecord } from "../types";
 import { LoadingDots } from "./LoadingDots";
 
 interface ComposerProps {
@@ -27,6 +27,8 @@ interface ComposerProps {
   selectedSkills: string[];
   submitting: boolean;
   running: boolean;
+  interventionMode: "interrupt" | "queue";
+  queuedInterventions: RunIntervention[];
   onValue: (value: string) => void;
   onFiles: (files: File[]) => void;
   onRemoveFile: (key: string) => void;
@@ -34,6 +36,8 @@ interface ComposerProps {
   onToggleSkill: (id: string) => void;
   onSubmit: (textOverride?: string) => Promise<void> | void;
   onStop: () => void;
+  onInterventionMode: (mode: "interrupt" | "queue") => void;
+  onCancelIntervention: (id: string) => void;
   onTranscribe: (file: File) => Promise<string>;
   onSpeak: (text: string, signal?: AbortSignal) => Promise<Blob>;
   onListFiles: () => Promise<AttachmentRecord[]>;
@@ -45,6 +49,7 @@ interface ComposerProps {
 
 export function Composer(props: ComposerProps) {
   const { latestAnswer, onSpeak, ttsAvailable } = props;
+  const queuedInterventions = props.queuedInterventions || [];
   const [addOpen, setAddOpen] = useState(false);
   const [pluginOpen, setPluginOpen] = useState(false);
   const [skillOpen, setSkillOpen] = useState(false);
@@ -367,6 +372,25 @@ export function Composer(props: ComposerProps) {
         }
       }}
     >
+      {queuedInterventions.length > 0 && (
+        <div className="intervention-queue" aria-label="排队中的追加要求">
+          {queuedInterventions.map((item) => (
+            <div className="intervention-chip" key={item.id}>
+              <span>
+                <strong>等待下一执行节点</strong>
+                <small>{item.content || `已附加 ${item.attachment_ids.length} 个文件`}</small>
+              </span>
+              <button
+                type="button"
+                onClick={() => props.onCancelIntervention(item.id)}
+                aria-label={`取消排队要求：${item.content || "附件"}`}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {props.attachments.length > 0 && (
         <div className="attachment-strip" aria-label="待发送附件">
           {props.attachments.map((attachment) => (
@@ -494,11 +518,42 @@ export function Composer(props: ComposerProps) {
             </button>
           )}
           <button type="button" className={`voice-button ${realtimeOpen ? "active" : ""}`} onClick={realtimeOpen ? closeRealtime : startRealtime} aria-label="实时语音模式"><AudioLines size={18} /></button>
-          {props.running || props.submitting ? (
-            <button type="button" className="stop-button" onClick={props.onStop} disabled={!props.running} aria-label="停止当前任务"><Square size={14} />停止</button>
-          ) : (
-            <button className="send-button" disabled={!props.value.trim() && !props.attachments.length} aria-label="发送"><Send size={18} /></button>
+          {props.running && (
+            <div className="intervention-mode" role="group" aria-label="运行中追加要求的处理方式">
+              <button
+                type="button"
+                className={props.interventionMode === "queue" ? "selected" : ""}
+                onClick={() => props.onInterventionMode("queue")}
+                aria-label="排队追加：在智能体进入下一个执行节点前加入新要求"
+              >
+                排队
+              </button>
+              <button
+                type="button"
+                className={props.interventionMode === "interrupt" ? "selected interrupt" : "interrupt"}
+                onClick={() => props.onInterventionMode("interrupt")}
+                aria-label="立即打断：中断当前步骤并带着新要求从检查点继续"
+              >
+                打断
+              </button>
+            </div>
           )}
+          {props.running && (
+            <button type="button" className="stop-button" onClick={props.onStop} aria-label="停止当前任务"><Square size={14} />停止</button>
+          )}
+          <button
+            className={`send-button ${props.running ? "intervention-send" : ""}`}
+            disabled={props.submitting || (!props.value.trim() && !props.attachments.length)}
+            aria-label={
+              props.running
+                ? props.interventionMode === "interrupt"
+                  ? "立即打断并发送新要求"
+                  : "将新要求排队发送"
+                : "发送"
+            }
+          >
+            {props.submitting ? <LoadingDots label="发送中" /> : <Send size={18} />}
+          </button>
         </div>
       </form>
       {dragging && <div className="drop-hint"><Paperclip size={18} />松开即可添加文件</div>}
@@ -509,7 +564,7 @@ export function Composer(props: ComposerProps) {
         <button className="voice-dialog-scrim" aria-label="退出语音对话" onClick={closeRealtime} />
         <section ref={realtimeDialog} className="realtime-voice" role="dialog" aria-modal="true" aria-label="语音对话模式">
           <header><span className={`clinical-pulse ${realtimeListening ? "listening" : ""}`} /><div><strong>语音对话</strong><small>{voicePhaseLabel(realtimePhase, props.ttsAvailable)}</small></div><button className="icon-button" onClick={closeRealtime} aria-label="退出语音对话"><X size={18} /></button></header>
-          <div className="realtime-transcript">{props.value || "点击开始说话；结束后将安全转写并直接提问。"}</div>
+          <div className="realtime-transcript">{props.value || "点击开始说话；结束后将转写并直接提问。"}</div>
           {spokenAudioUrl && <audio className="voice-answer-player" src={spokenAudioUrl} controls preload="metadata" />}
           <footer>
             <button
@@ -532,7 +587,6 @@ export function Composer(props: ComposerProps) {
         </section>
         </>
       )}
-      <p className="composer-note">人工智能可能遗漏、误判或使用过期资料，请结合原始检查与专业判断；如出现不适、突发视力下降或剧烈眼痛，请及时就医。</p>
     </div>
   );
 }

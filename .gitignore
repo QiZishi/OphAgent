@@ -18,6 +18,7 @@ app/static/uploads/*
 !app/static/uploads/.gitkeep
 app/db/*.db
 data/runtime/
+/data/runtime.sqlite3
 data/evolution/
 data/knowledge_base/index/
 .worktrees/

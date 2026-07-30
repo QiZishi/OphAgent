@@ -11,6 +11,7 @@ from app.auth.security import get_current_user_from_ws
 from app.db.crud import get_conversation_by_id
 from app.db.database import engine
 from app.domain.models import RunInput
+from app.runtime.public_projection import public_event_payload
 
 router = APIRouter()
 
@@ -41,7 +42,9 @@ async def websocket_run_events(websocket: WebSocket, run_id: str):
             await websocket.close(code=1008)
             return
         async for event in store.stream_events(run_id):
-            await websocket.send_json(event.model_dump(mode="json"))
+            payload = public_event_payload(event)
+            if payload is not None:
+                await websocket.send_json(payload)
     except WebSocketDisconnect:
         return
     finally:
@@ -104,7 +107,9 @@ async def websocket_chat_compatibility(websocket: WebSocket):
             )
             await websocket.send_json({"type": "run.created", "run_id": run.id, "trace_id": run.trace_id})
             async for event in websocket.app.state.runtime_store.stream_events(run.id):
-                payload = event.model_dump(mode="json")
+                payload = public_event_payload(event)
+                if payload is None:
+                    continue
                 await websocket.send_json(payload)
                 if event.type == "answer.completed":
                     await websocket.send_json(

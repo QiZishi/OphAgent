@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import type { AttachmentRecord, Run } from "../types";
+import type { AttachmentRecord, Run, RunEvent } from "../types";
 import { ConversationThread } from "./ConversationThread";
 
 const attachment: AttachmentRecord = {
@@ -77,6 +77,7 @@ const run: Run = {
   answer: "请结合完整眼科检查复核。",
   warnings: [],
   attempt: 1,
+  execution_revision: 1,
   budget: {
     model_calls: 2,
     prompt_tokens: 100,
@@ -105,10 +106,85 @@ describe("ConversationThread 专业插件结果", () => {
       />
     );
 
-    expect(screen.getByText("经校验的可疑区域")).toBeInTheDocument();
+    expect(screen.getByText("可疑区域")).toBeInTheDocument();
     expect(screen.getByText("模型定位把握度：较高")).toBeInTheDocument();
     expect(screen.getByText("支持程度不是患病概率")).toBeInTheDocument();
     expect(screen.getByText("视盘相关改变待查")).toBeInTheDocument();
     expect(screen.queryByText("92%")).not.toBeInTheDocument();
+  });
+
+  it("同一 attempt 重建计划后只显示当前 execution revision", () => {
+    const resumedRun: Run = {
+      ...run,
+      status: "running",
+      answer: undefined,
+      attempt: 1,
+      execution_revision: 2,
+      plan: [],
+    };
+    const events: RunEvent[] = [
+      {
+        id: "evt_old",
+        sequence: 1,
+        run_id: run.id,
+        trace_id: run.trace_id,
+        type: "answer.delta",
+        public_summary: "正在生成回答",
+        data: { delta: "不应显示的旧输出", attempt: 1, output_revision: 1 },
+        timestamp: "2026-07-29T00:00:01Z",
+      },
+      {
+        id: "evt_new",
+        sequence: 2,
+        run_id: run.id,
+        trace_id: run.trace_id,
+        type: "answer.delta",
+        public_summary: "正在生成回答",
+        data: { delta: "当前有效输出", attempt: 1, output_revision: 2, execution_revision: 2 },
+        timestamp: "2026-07-29T00:00:02Z",
+      },
+      {
+        id: "evt_old_evidence",
+        sequence: 3,
+        run_id: run.id,
+        trace_id: run.trace_id,
+        type: "retrieval.result",
+        public_summary: "旧检索",
+        data: {
+          attempt: 1,
+          execution_revision: 1,
+          evidence: [{
+            id: "ev_old",
+            title: "OLD_EVIDENCE_SENTINEL",
+            source: "old",
+            excerpt: "old",
+            source_status: "current",
+            source_type: "guideline",
+            score: 1,
+          }],
+        },
+        timestamp: "2026-07-29T00:00:03Z",
+      },
+    ];
+
+    render(
+      <ConversationThread
+        runs={[resumedRun]}
+        eventsByRun={{ [run.id]: events }}
+        artifactsByRun={{}}
+        attachmentsById={{}}
+        onResume={vi.fn()}
+        onRetry={vi.fn()}
+        onFeedback={vi.fn()}
+        onDelete={vi.fn()}
+        onArtifact={vi.fn()}
+        onConvertToDocument={vi.fn()}
+        onSpeak={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("当前有效输出")).toBeInTheDocument();
+    expect(screen.queryByText("不应显示的旧输出")).not.toBeInTheDocument();
+    expect(screen.queryByText("OLD_EVIDENCE_SENTINEL")).not.toBeInTheDocument();
   });
 });

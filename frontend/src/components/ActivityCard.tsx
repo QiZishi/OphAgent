@@ -9,7 +9,13 @@ export function ActivityCard({ run, events, onResume }: { run: Run; events: RunE
   const recoverable = ["failed", "interrupted", "cancelled"].includes(run.status);
   const [open, setOpen] = useState(!terminal);
   const [recovering, setRecovering] = useState(false);
-  const terminalEvent = [...events].reverse().find((event) =>
+  const currentEvents = useMemo(
+    () => events.filter(
+      (event) => Number(event.data.execution_revision ?? 1) === run.execution_revision
+    ),
+    [events, run.execution_revision]
+  );
+  const terminalEvent = [...currentEvents].reverse().find((event) =>
     ["run.completed", "run.failed", "run.cancelled"].includes(event.type)
   );
   // Feedback and other post-run metadata updates may change run.updated_at.
@@ -19,16 +25,20 @@ export function ActivityCard({ run, events, onResume }: { run: Run; events: RunE
   const usedPlugins = run.route?.selected_plugins?.map(pluginLabel) || [];
   const visibleNodes = useMemo(
     () => run.plan.filter((node) =>
-      node.status !== "pending"
-      || events.some((event) => event.data.node_id === node.id)
+      !["draft", "critic"].includes(node.id)
+      && (
+        node.status !== "pending"
+        || currentEvents.some((event) => event.data.node_id === node.id)
+      )
     ),
-    [events, run.plan]
+    [currentEvents, run.plan]
   );
-  const latestPublicEvent = [...events].reverse().find((event) =>
-    ["agent.started", "agent.completed", "tool.started", "tool.completed", "tool.failed", "retrieval.result"].includes(event.type)
+  const latestPublicEvent = [...currentEvents].reverse().find((event) =>
+    ["agent.started", "agent.completed", "tool.started", "tool.completed", "retrieval.result"].includes(event.type)
+    && !["draft", "critic"].includes(String(event.data.node_id || ""))
   );
-  const contextEvent = events.find((event) => event.type === "context.prepared");
-  const memoryEvent = events.find((event) => event.type === "memory.recalled");
+  const contextEvent = currentEvents.find((event) => event.type === "context.prepared");
+  const memoryEvent = currentEvents.find((event) => event.type === "memory.recalled");
   const title = run.status === "failed"
     ? "处理未完成"
     : run.status === "interrupted"
@@ -65,7 +75,7 @@ export function ActivityCard({ run, events, onResume }: { run: Run; events: RunE
             <div className="activity-awaiting"><LoadingDots label="正在建立执行路径" /><span>正在确定下一步</span></div>
           )}
           {visibleNodes.map((node) => (
-            <PublicStage key={node.id} node={node} events={events.filter((event) => event.data.node_id === node.id)} />
+            <PublicStage key={node.id} node={node} events={currentEvents.filter((event) => event.data.node_id === node.id)} />
           ))}
           {recoverable && (
             <div className="activity-recovery">
@@ -139,6 +149,7 @@ function PublicStage({ node, events }: { node: PlanNode; events: RunEvent[] }) {
 }
 
 function summarizeResult(node: PlanNode): string[] {
+  if (node.status !== "completed") return [];
   const output = node.output;
   if (!output) return [];
   const items: string[] = [];
@@ -162,7 +173,7 @@ function summarizeResult(node: PlanNode): string[] {
   if (typeof output.region_count === "number") {
     items.push(output.region_count > 0
       ? `保留 ${output.region_count} 个通过坐标校验的可疑区域。`
-      : "模型未返回可可靠校验的定位区域，系统没有补造坐标。");
+      : "本次未获得可显示的定位区域。");
   }
   if (Array.isArray(output.transcripts)) items.push(`已整理 ${output.transcripts.length} 段语音内容。`);
   if (output.clinical_state && typeof output.clinical_state === "object") {
@@ -170,10 +181,6 @@ function summarizeResult(node: PlanNode): string[] {
     if (state.chief_complaint) items.push(`主诉：${compact(state.chief_complaint)}`);
     if (Array.isArray(state.red_flags) && state.red_flags.length) items.push(`识别到 ${state.red_flags.length} 项需要优先关注的信息。`);
     if (Array.isArray(state.unresolved_questions) && state.unresolved_questions.length) items.push(`仍有 ${state.unresolved_questions.length} 项信息需要确认。`);
-  }
-  if (output.citation_validation && typeof output.citation_validation === "object") {
-    const validation = output.citation_validation as Record<string, unknown>;
-    if (validation.valid !== undefined) items.push(validation.valid ? "引用与来源已经完成一致性检查。" : "引用检查发现需要保留的不确定项。");
   }
   if (typeof output.answer === "string" && !items.length) items.push("已经形成最终回答并完成公开输出。");
   if (!items.length) {

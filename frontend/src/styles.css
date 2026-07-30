@@ -223,6 +223,11 @@ img { max-width: 100%; }
   max-width: 100%; margin: 0; padding: 10px 15px; border-radius: 18px 18px 4px 18px;
   background: #f1f1f1; color: var(--text-primary); font-size: 16.80px; line-height: 1.62; white-space: pre-wrap;
 }
+.user-bubble.intervention-message { margin-top: -16px; margin-bottom: 24px; }
+.intervention-message .user-message > small {
+  padding-right: 6px; color: var(--brand-cyan-dark); font-size: 10.80px;
+}
+.intervention-message p { background: #edf8fb; }
 .user-attachment-grid { max-width: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .user-attachment {
   width: min(280px, 100%); min-height: 64px; padding: 7px; border: 1px solid var(--border);
@@ -477,7 +482,38 @@ img { max-width: 100%; }
 .send-button { width: 34px; height: 34px; border: 0; border-radius: 50%; display: grid; place-items: center; background: #252525; color: white; }
 .send-button:hover { background: #000; }
 .send-button:disabled { opacity: .27; }
+.send-button.intervention-send { background: var(--brand-cyan-dark); }
 .stop-button { height: 32px; border: 1px solid #e8c3c3; border-radius: 8px; padding: 0 9px; display: flex; align-items: center; gap: 6px; color: var(--danger); background: var(--danger-soft); font-size: 12.00px; }
+.intervention-mode {
+  height: 30px; display: flex; align-items: center; padding: 2px;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--bg-subtle);
+}
+.intervention-mode button {
+  height: 24px; border: 0; border-radius: 6px; padding: 0 7px;
+  color: var(--text-secondary); background: transparent; font-size: 10.80px;
+}
+.intervention-mode button.selected { color: #245a6c; background: white; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.intervention-mode button.selected.interrupt { color: #8a3434; }
+.intervention-queue {
+  width: min(850px, calc(100% - 36px)); margin: 0 auto 7px;
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.intervention-chip {
+  max-width: 100%; min-height: 36px; display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px 5px 10px; border: 1px solid #cbe3eb; border-radius: 10px;
+  color: #315d6c; background: #f3fafc;
+}
+.intervention-chip > span { min-width: 0; display: grid; }
+.intervention-chip strong { font-size: 10.80px; font-weight: 650; }
+.intervention-chip small {
+  max-width: 390px; overflow: hidden; color: var(--text-secondary);
+  font-size: 10.80px; white-space: nowrap; text-overflow: ellipsis;
+}
+.intervention-chip button {
+  width: 26px; height: 26px; border: 0; border-radius: 6px;
+  display: grid; place-items: center; color: #53737e; background: transparent;
+}
+.intervention-chip button:hover { background: #e3f2f6; }
 .voice-button { width: 32px; height: 32px; border: 0; border-radius: 50%; display: grid; place-items: center; background: transparent; color: #555; }
 .voice-button:hover, .voice-button.active { background: var(--brand-soft); color: var(--brand-cyan-dark); }
 .voice-button.recording { color: var(--danger); background: var(--danger-soft); animation: voice-pulse 1.2s ease-in-out infinite; }
@@ -837,6 +873,9 @@ img { max-width: 100%; }
   .markdown-body { font-size: 15.60px; }
   .composer-wrap { padding: 0 8px 7px; }
   .composer { border-radius: 15px; }
+  .composer-toolbar { gap: 3px; }
+  .intervention-mode button { padding: 0 5px; }
+  .stop-button { width: 32px; padding: 0; justify-content: center; font-size: 0; }
   .composer-note { font-size: 9.60px; }
   .plugin-menu { width: min(310px, calc(100vw - 30px)); }
   .skill-menu { width: min(350px, calc(100vw - 30px)); }

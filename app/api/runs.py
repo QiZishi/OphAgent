@@ -15,9 +15,14 @@ from app.auth.security import get_current_user
 from app.db.crud import get_conversation_by_id
 from app.db.database import get_session
 from app.db.models import User
-from app.domain.models import RunInput, RunRecord
+from app.domain.models import InterventionMode, RunInput
 from app.runtime.document_exports import answer_with_references, render_docx, render_jpg, render_pdf
 from app.runtime.orchestrator import RunOrchestrator
+from app.runtime.public_projection import (
+    PublicRunRecord,
+    public_event_payload,
+    public_run_record,
+)
 from app.runtime.store import RuntimeStore
 
 router = APIRouter(prefix="/runs", tags=["Runs"])
@@ -32,7 +37,15 @@ class RunFeedbackUpdate(BaseModel):
     value: Literal["up", "down"] | None = None
 
 
-@router.post("", response_model=RunRecord, status_code=202)
+class RunInterventionCreate(BaseModel):
+    mode: InterventionMode
+    content: str | None = Field(default=None, max_length=20_000)
+    attachment_ids: list[str] = Field(default_factory=list)
+    expected_attempt: int = Field(ge=1)
+    client_message_id: str = Field(min_length=1, max_length=128)
+
+
+@router.post("", response_model=PublicRunRecord, status_code=202)
 async def create_run(
     payload: RunInput,
     current_user: User = Depends(get_current_user),
@@ -54,21 +67,24 @@ async def create_run(
         if conversation is None or conversation.user_id != current_user.id:
             raise HTTPException(status_code=404, detail="Conversation not found")
     try:
-        return await orchestrator.create(int(current_user.id), payload)
+        return public_run_record(await orchestrator.create(int(current_user.id), payload))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.get("", response_model=list[RunRecord])
+@router.get("", response_model=list[PublicRunRecord])
 async def list_runs(
     limit: int = Query(50, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     store: RuntimeStore = Depends(get_runtime_store),
 ):
-    return await store.list_runs(int(current_user.id), limit)
+    return [
+        public_run_record(run)
+        for run in await store.list_runs(int(current_user.id), limit)
+    ]
 
 
-@router.get("/{run_id}", response_model=RunRecord)
+@router.get("/{run_id}", response_model=PublicRunRecord)
 async def get_run(
     run_id: str,
     current_user: User = Depends(get_current_user),
@@ -77,50 +93,101 @@ async def get_run(
     run = await store.get_run(run_id)
     if run is None or run.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Run not found")
-    return run
+    return public_run_record(run)
 
 
-@router.post("/{run_id}/cancel", response_model=RunRecord)
+@router.post("/{run_id}/cancel", response_model=PublicRunRecord)
 async def cancel_run(
     run_id: str,
     current_user: User = Depends(get_current_user),
     orchestrator: RunOrchestrator = Depends(get_orchestrator),
 ):
     try:
-        return await orchestrator.cancel(run_id, int(current_user.id))
+        return public_run_record(await orchestrator.cancel(run_id, int(current_user.id)))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
 
 
-@router.post("/{run_id}/resume", response_model=RunRecord, status_code=202)
+@router.post("/{run_id}/interventions", response_model=PublicRunRecord, status_code=202)
+async def create_run_intervention(
+    run_id: str,
+    payload: RunInterventionCreate,
+    current_user: User = Depends(get_current_user),
+    orchestrator: RunOrchestrator = Depends(get_orchestrator),
+):
+    if not (payload.content and payload.content.strip()) and not payload.attachment_ids:
+        raise HTTPException(status_code=422, detail="请提供追加要求或附件")
+    try:
+        return public_run_record(
+            await orchestrator.intervene(
+                run_id,
+                int(current_user.id),
+                mode=payload.mode,
+                content=payload.content,
+                attachment_ids=payload.attachment_ids,
+                expected_attempt=payload.expected_attempt,
+                client_message_id=payload.client_message_id,
+            )
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.delete(
+    "/{run_id}/interventions/{intervention_id}",
+    response_model=PublicRunRecord,
+)
+async def cancel_run_intervention(
+    run_id: str,
+    intervention_id: str,
+    current_user: User = Depends(get_current_user),
+    orchestrator: RunOrchestrator = Depends(get_orchestrator),
+):
+    try:
+        return public_run_record(
+            await orchestrator.cancel_intervention(
+                run_id,
+                intervention_id,
+                int(current_user.id),
+            )
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{run_id}/resume", response_model=PublicRunRecord, status_code=202)
 async def resume_run(
     run_id: str,
     current_user: User = Depends(get_current_user),
     orchestrator: RunOrchestrator = Depends(get_orchestrator),
 ):
     try:
-        return await orchestrator.resume(run_id, int(current_user.id))
+        return public_run_record(await orchestrator.resume(run_id, int(current_user.id)))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/{run_id}/retry", response_model=RunRecord, status_code=202)
+@router.post("/{run_id}/retry", response_model=PublicRunRecord, status_code=202)
 async def retry_run(
     run_id: str,
     current_user: User = Depends(get_current_user),
     orchestrator: RunOrchestrator = Depends(get_orchestrator),
 ):
     try:
-        return await orchestrator.retry(run_id, int(current_user.id))
+        return public_run_record(await orchestrator.retry(run_id, int(current_user.id)))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.patch("/{run_id}/feedback", response_model=RunRecord)
+@router.patch("/{run_id}/feedback", response_model=PublicRunRecord)
 async def update_run_feedback(
     run_id: str,
     payload: RunFeedbackUpdate,
@@ -128,7 +195,9 @@ async def update_run_feedback(
     orchestrator: RunOrchestrator = Depends(get_orchestrator),
 ):
     try:
-        return await orchestrator.record_feedback(run_id, int(current_user.id), payload.value)
+        return public_run_record(
+            await orchestrator.record_feedback(run_id, int(current_user.id), payload.value)
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
 
@@ -162,6 +231,7 @@ async def export_run(
         item
         for event in events
         if event.type == "retrieval.result"
+        and int(event.data.get("execution_revision", 1)) == run.execution_revision
         for item in event.data.get("evidence", [])
         if isinstance(item, dict)
     ]
@@ -189,7 +259,7 @@ async def export_run(
     )
 
 
-@router.post("/{run_id}/input", response_model=RunRecord, status_code=202)
+@router.post("/{run_id}/input", response_model=PublicRunRecord, status_code=202)
 async def provide_run_input(
     run_id: str,
     payload: RunInputUpdate,
@@ -199,11 +269,13 @@ async def provide_run_input(
     if not payload.content and not payload.attachment_ids:
         raise HTTPException(status_code=422, detail="请提供补充文字或附件")
     try:
-        return await orchestrator.provide_input(
-            run_id,
-            int(current_user.id),
-            payload.content,
-            payload.attachment_ids,
+        return public_run_record(
+            await orchestrator.provide_input(
+                run_id,
+                int(current_user.id),
+                payload.content,
+                payload.attachment_ids,
+            )
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
@@ -211,14 +283,14 @@ async def provide_run_input(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/{run_id}/approve", response_model=RunRecord, status_code=202)
+@router.post("/{run_id}/approve", response_model=PublicRunRecord, status_code=202)
 async def approve_run(
     run_id: str,
     current_user: User = Depends(get_current_user),
     orchestrator: RunOrchestrator = Depends(get_orchestrator),
 ):
     try:
-        return await orchestrator.approve(run_id, int(current_user.id))
+        return public_run_record(await orchestrator.approve(run_id, int(current_user.id)))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
     except ValueError as exc:
@@ -237,8 +309,9 @@ async def list_run_events(
         raise HTTPException(status_code=404, detail="Run not found")
 
     return [
-        event.model_dump(mode="json")
+        payload
         for event in await store.get_events(run_id, after_sequence)
+        if (payload := public_event_payload(event)) is not None
     ]
 
 
@@ -277,7 +350,9 @@ async def stream_run_events(
                 except StopAsyncIteration:
                     return
                 pending_event = None
-                payload = event.model_dump(mode="json")
+                payload = public_event_payload(event)
+                if payload is None:
+                    continue
                 yield (
                     f"id: {event.sequence}\nevent: {event.type}\n"
                     f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"

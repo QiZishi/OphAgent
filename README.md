@@ -132,11 +132,11 @@ OphAgent is a full-stack Agent workspace for ophthalmic research and clinical as
 
 | | |
 |---|---|
-| **Durable by design** | Conversations, Runs, events, attachments and context snapshots are persisted with clear refresh, reconnect and recovery states. |
+| **Durable by design** | Conversations, Runs, events, attachments and context snapshots are persisted with clear refresh, reconnect, queued steering, interruption and recovery states. |
 | **Evidence first** | Guideline-first hybrid retrieval, source lifecycle, evidence ledgers and paragraph-level claim checks keep answers reviewable. |
-| **Security built in** | Red-flag rules, attachment ownership, idempotency, budgets, cancellation, coordinate validation and source gates span the execution path. |
+| **Backstage validation** | Red-flag, ownership, budget, coordinate and citation checks run backstage; invalid drafts stay private and only the repaired final result is presented. |
 | **Multimodal and parallel** | Fundus, OCT, anterior-segment images, PDFs, text and audio enter a typed DAG whose relevant nodes can execute concurrently. |
-| **Extensible** | Three professional plugins, gated `SKILL.md` packages, memory, OpenAI-compatible providers and external tools share composable contracts. |
+| **Extensible** | Three professional plugins, trusted built-in Skills, user-approved imported Skills, memory, OpenAI-compatible providers and external tools share composable contracts. |
 | **Controlled self-evolution** | Low-authority Memory CRUD and validated low-risk Skill utility adapt online; content, permissions, safety and other risky changes pass isolated offline evaluation and trusted approval. |
 | **Available everywhere** | A responsive React workspace covers desktop and mobile, with projects, files, knowledge, skills and settings in one place. |
 
@@ -150,7 +150,8 @@ OphAgent is a full-stack Agent workspace for ophthalmic research and clinical as
 - **Professional plugin workflows**: compose lesion localization, auxiliary assessment and report generation on demand.
 - **Project-based organization**: group conversations, private files, generated artifacts and clinical goals.
 - **Editable reports**: continue editing in the document workspace and export MD, PDF, DOCX or JPG.
-- **Personalized capabilities**: manage confirmed memory, gated skills, provider configuration and knowledge sources.
+- **Personalized capabilities**: create, read, update and delete memory online; manage skills, provider configuration and knowledge sources.
+- **Mid-run steering**: queue a requirement for the next node or interrupt immediately and continue from a checkpoint.
 - **Safe self-evolution**: turn outcomes and explicit feedback into candidates, then validate, approve, release or roll them back through an independent Harness.
 
 </details>
@@ -241,6 +242,7 @@ Open <http://localhost:8013>, create an account and start a conversation. `STRIC
 | Knowledge retrieval | Guideline-first BM25 + optional BGE-M3 embeddings and Rerank, lifecycle filtering, PDF page visuals and lightweight graph expansion |
 | Speech and documents | Optional server-side ASR/TTS, authenticated audio upload and MinerU/local document parsing |
 | Workspace management | Projects, private files, generated artifacts, provider overrides, memory, skills, source governance and capability health |
+| Mid-run intervention | New requirements can be queued FIFO for the next node or interrupt immediately; the runtime resumes from a durable checkpoint and rebuilds downstream work |
 
 Every screenshot below was captured directly from the current repository running against its real backend in an isolated local demo environment after completing registration, query, retrieval and workspace actions.
 
@@ -292,11 +294,12 @@ flowchart TB
 ### Runtime highlights
 
 - **Durable Run protocol** — every state transition, tool result, artifact and public progress event has a stable `run_id`, `trace_id` and monotonic sequence.
-- **True response streaming** — provider text is emitted as `answer.delta` events over SSE. Early events are backfilled from a durable cursor, and reconnects resume without duplicated content.
+- **Validated answer publication** — provider drafts remain internal until safety, citation and formatting checks pass. Failure reasons are injected into retry context; the runtime rolls back the affected node and replaces the result in place without exposing a bad draft or repair trace.
+- **Two intervention modes** — `queue` persists requirements FIFO for the next node boundary; `interrupt` cancels the current node, records the reason and resumes automatically from a checkpoint. The answer, artifact and terminal event publish in one transaction that also checks pending interventions.
 - **Quick / Standard / Deep routing** — deterministic intent and risk rules select a bounded plan, with emergency signals able to override a requested quick mode.
 - **Typed clinical state** — user facts, missing information, red flags, evidence and model observations occupy explicit fields.
 - **Composable professional plugins** — `lesion_localizer`, `aux_diagnosis` and `report_generator` can be selected explicitly or composed by the router.
-- **Controlled memory and skills** — memory enters `proposed`; imported `SKILL.md` packages pass structure, dependency, safety and checksum gates before enablement.
+- **Online memory and two-track skills** — Memory supports online CRUD, with clinical facts optionally entering `proposed` before confirmation. Built-in Skills are trusted; user-imported Skills receive structure, dependency and risk scans, with explicit risk disclosure and a user-controlled force-load approval path.
 - **Capability health** — model, retrieval, parsing and speech services register their live connection state in one operational view.
 - **Privacy-aware observability** — OpenTelemetry exports allowlisted identifiers, status, latency and aggregate token usage while patient content and secrets remain inside the application boundary.
 
@@ -317,7 +320,8 @@ The public UI presents concise stage summaries, validated outputs and evidence w
 - Deterministic red-flag patterns run before model routing and can force emergency escalation.
 - Attachments are referenced by authenticated IDs. Public REST and WebSocket APIs reject client-supplied server file paths.
 - Run budgets bound model calls, tokens, wall time and node concurrency; cancellation is persisted and propagated.
-- Required-node failures produce structured failure events. Optional capability failures yield explicit warnings.
+- Safety, citation or formatting failures are fed back into the node context and regenerated. A required-node failure triggers one bounded, hidden execution replay from the plan boundary with the failure reason preserved; only a persistent second failure reaches the recoverable terminal state.
+- Repair, compaction and fallback events remain in the internal audit stream. The normal UI does not inject system-policy prose unrelated to the request; only directly actionable, case-specific red flags are shown.
 - Citations are checked at claim-paragraph level, not merely by the presence of one marker.
 - Expired or superseded knowledge sources are excluded by default; low-trust sources are down-weighted and labeled.
 - Restart recovery marks unfinished runs as interrupted and preserves completed work for resume/retry.
@@ -465,6 +469,8 @@ Use only material you are authorized to process and distribute. Uploaded sources
 | `GET /api/v1/runs/{id}` | Read durable Run state |
 | `GET /api/v1/runs/{id}/events` | Replay ordered events after a cursor |
 | `GET /api/v1/runs/{id}/events/stream` | SSE stream with replay cursor and heartbeat |
+| `POST /api/v1/runs/{id}/interventions` | Queue or immediately interrupt a Run with a new user requirement |
+| `DELETE /api/v1/runs/{id}/interventions/{intervention_id}` | Cancel a queued requirement that has not yet been applied |
 | `POST /api/v1/upload` | Authenticated typed attachment upload |
 | `GET /api/v1/artifacts`, `GET /api/v1/attachments` | Private generated and uploaded files |
 | `WS /ws/runs/{id}` | Authenticated WebSocket event bridge |
@@ -486,6 +492,11 @@ npm --prefix frontend run build
 
 npm --prefix frontend exec playwright install chromium
 npm --prefix frontend run test:e2e -- workspace.spec.ts
+
+# Use the real providers configured in .env for full-application acceptance
+RUN_LIVE_AGENT_E2E=1 npm --prefix frontend run test:e2e -- \
+  live-backend.spec.ts live-agent.spec.ts live-plugins.spec.ts live-interventions.spec.ts \
+  --workers=1
 ```
 
 When adding a capability:
@@ -493,8 +504,8 @@ When adding a capability:
 1. Add or extend typed input/output contracts in `app/domain/`.
 2. Register external behavior in `app/tools/` and declare real health semantics.
 3. Update routing/planning in `app/runtime/` without bypassing risk gates or budgets.
-4. Add replayable public events and tests for ownership, failure and cancellation paths.
-5. Expose only validated public summaries in the React workspace.
+4. Add replayable public events and tests for ownership, failure, cancellation, queueing and interruption paths.
+5. Expose only validated final results in the React workspace; retries, repairs and failed drafts must not enter the public event stream.
 
 ## Open Source Status
 

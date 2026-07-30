@@ -25,6 +25,17 @@ class RunStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class InterventionMode(StrEnum):
+    INTERRUPT = "interrupt"
+    QUEUE = "queue"
+
+
+class InterventionStatus(StrEnum):
+    QUEUED = "queued"
+    APPLIED = "applied"
+    CANCELLED = "cancelled"
+
+
 class NodeStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"
@@ -234,6 +245,29 @@ class RunInput(BaseModel):
     clinical_state: ClinicalState = Field(default_factory=ClinicalState)
 
 
+class RunIntervention(BaseModel):
+    """Durable user input submitted while a Run is still executing."""
+
+    id: str = Field(default_factory=lambda: f"int_{uuid4().hex}")
+    run_id: str
+    user_id: int
+    mode: InterventionMode
+    content: str | None = Field(default=None, max_length=20_000)
+    attachment_ids: list[str] = Field(default_factory=list)
+    expected_attempt: int = Field(ge=1)
+    client_message_id: str = Field(max_length=128)
+    status: InterventionStatus = InterventionStatus.QUEUED
+    created_at: datetime = Field(default_factory=utc_now)
+    applied_at: datetime | None = None
+    cancelled_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def validate_input(self) -> RunIntervention:
+        if not (self.content and self.content.strip()) and not self.attachment_ids:
+            raise ValueError("请提供追加要求或附件")
+        return self
+
+
 class RunRecord(BaseModel):
     id: str = Field(default_factory=lambda: f"run_{uuid4().hex}")
     user_id: int
@@ -256,7 +290,10 @@ class RunRecord(BaseModel):
     pending_question: str | None = None
     pending_approval: dict[str, Any] | None = None
     user_inputs: list[str] = Field(default_factory=list)
+    interventions: list[RunIntervention] = Field(default_factory=list)
+    applied_intervention_ids: list[str] = Field(default_factory=list)
     attempt: int = 1
+    execution_revision: int = Field(default=1, ge=1)
     version: int = Field(default=1, ge=1)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
@@ -271,6 +308,7 @@ class RunEvent(BaseModel):
     parent_event_id: str | None = None
     timestamp: datetime = Field(default_factory=utc_now)
     status: str | None = None
+    visibility: Literal["public", "internal"] = "public"
     public_summary: str
     data: dict[str, Any] = Field(default_factory=dict)
     prompt_tokens: int = 0

@@ -38,9 +38,10 @@ from app.db.crud import (
 )
 from app.db.database import get_session
 from app.db.models import User
-from app.domain.models import AttachmentRecord, RunInput, RunRecord
+from app.domain.models import AttachmentRecord, RunInput
 from app.runtime.errors import CapabilityUnavailable
 from app.runtime.orchestrator import RunOrchestrator
+from app.runtime.public_projection import PublicRunRecord, public_run_record
 from app.runtime.store import RuntimeStore
 from app.tools.capabilities import CapabilityClients, SpeechRequest, SynthesisRequest
 
@@ -72,7 +73,7 @@ class ConversationResponse(BaseModel):
 
 class ConversationDetailResponse(ConversationResponse):
     messages: list[MessageResponse] = Field(default_factory=list)
-    runs: list[RunRecord] = Field(default_factory=list)
+    runs: list[PublicRunRecord] = Field(default_factory=list)
 
 
 class ConversationUpdate(BaseModel):
@@ -92,7 +93,7 @@ class ConversationMessageCreate(BaseModel):
 
 class ConversationMessageRunResponse(BaseModel):
     message: MessageResponse
-    run: RunRecord
+    run: PublicRunRecord
 
 
 class SpeechSynthesisCreate(BaseModel):
@@ -447,7 +448,7 @@ async def get_conversation(
             for message in messages
         ],
         runs=[
-            run
+            public_run_record(run)
             for run in await store.list_runs(int(current_user.id), limit=100)
             if run.input.conversation_id == conversation_id
         ],
@@ -532,7 +533,7 @@ async def create_conversation_message(
                     file_path=existing_message.file_path,
                     created_at=existing_message.created_at.isoformat(),
                 ),
-                run=existing_run,
+                run=public_run_record(existing_run),
             )
     plugin_id = payload.requested_plugins[0] if payload.requested_plugins else "core"
     try:
@@ -584,7 +585,7 @@ async def create_conversation_message(
             file_path=message.file_path,
             created_at=message.created_at.isoformat(),
         ),
-        run=run,
+        run=public_run_record(run),
     )
 
 

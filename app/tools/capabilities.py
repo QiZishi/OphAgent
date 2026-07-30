@@ -55,6 +55,108 @@ class SynthesisRequest(BaseModel):
     voice: str | None = None
 
 
+def _normalize_image_analysis_payload(decoded: Any) -> dict[str, Any]:
+    """Normalize common OpenAI-compatible JSON response shapes."""
+
+    if isinstance(decoded, dict):
+        parsed = dict(decoded)
+    elif isinstance(decoded, list):
+        mappings = [item for item in decoded if isinstance(item, dict)]
+        if not mappings:
+            observations = [
+                str(item).strip()
+                for item in decoded
+                if str(item).strip()
+            ]
+            return {
+                "summary": observations[0] if observations else "",
+                "observations": observations,
+                "limitations": [],
+                "uncertainty": "",
+                "regions": [],
+            }
+        summaries: list[str] = []
+        observations: list[Any] = []
+        limitations: list[Any] = []
+        regions: list[Any] = []
+        uncertainties: list[str] = []
+        for item in mappings:
+            if item.get("summary"):
+                summaries.append(str(item["summary"]).strip())
+            raw_observations = item.get("observations", [])
+            observations.extend(
+                raw_observations
+                if isinstance(raw_observations, list)
+                else [raw_observations]
+            )
+            raw_limitations = item.get("limitations", [])
+            limitations.extend(
+                raw_limitations
+                if isinstance(raw_limitations, list)
+                else [raw_limitations]
+            )
+            raw_regions = item.get("regions", [])
+            regions.extend(
+                raw_regions if isinstance(raw_regions, list) else [raw_regions]
+            )
+            if item.get("uncertainty"):
+                uncertainties.append(str(item["uncertainty"]).strip())
+        parsed = {
+            **mappings[0],
+            "summary": "\n".join(item for item in summaries if item),
+            "observations": observations,
+            "limitations": limitations,
+            "uncertainty": "\n".join(item for item in uncertainties if item),
+            "regions": regions,
+        }
+    else:
+        parsed = {
+            "summary": str(decoded).strip() if decoded is not None else "",
+        }
+    for field in ("observations", "limitations", "regions"):
+        value = parsed.get(field, [])
+        parsed[field] = value if isinstance(value, list) else [value]
+    parsed.setdefault("summary", "")
+    parsed.setdefault("uncertainty", "")
+    return parsed
+
+
+def _parse_image_analysis_content(raw: Any) -> dict[str, Any]:
+    """Parse provider content without failing the whole medical workflow on shape drift."""
+
+    if isinstance(raw, list):
+        raw = "".join(
+            str(block.get("text") or "")
+            for block in raw
+            if isinstance(block, dict)
+        )
+    if isinstance(raw, (dict, list)):
+        return _normalize_image_analysis_payload(raw)
+    text = str(raw or "").strip()
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE)
+    try:
+        return _normalize_image_analysis_payload(json.loads(cleaned or "{}"))
+    except (json.JSONDecodeError, TypeError, ValueError):
+        for left, right in (("{", "}"), ("[", "]")):
+            start = cleaned.find(left)
+            end = cleaned.rfind(right)
+            if start < 0 or end <= start:
+                continue
+            try:
+                return _normalize_image_analysis_payload(
+                    json.loads(cleaned[start : end + 1]),
+                )
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+        return {
+            "summary": cleaned,
+            "observations": [cleaned] if cleaned else [],
+            "limitations": ["图像观察未能细分为结构化字段"] if cleaned else [],
+            "uncertainty": "",
+            "regions": [],
+        }
+
+
 class CapabilityClients:
     def __init__(
         self,
@@ -190,7 +292,7 @@ class CapabilityClients:
         )
         payload = response.json()
         raw = payload["choices"][0]["message"].get("content") or "{}"
-        parsed = json.loads(raw)
+        parsed = _parse_image_analysis_content(raw)
         valid_regions: list[dict[str, Any]] = []
         for region in parsed.get("regions", []):
             try:

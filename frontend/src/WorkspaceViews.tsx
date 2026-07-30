@@ -106,7 +106,7 @@ function ProjectsPage({
 
   return (
     <section className="management-page">
-      <WorkspaceHeader kicker="工作上下文" title="项目" copy="把相关对话、文件和诊疗目标放在同一上下文中。项目不会改变医疗安全门禁。" />
+      <WorkspaceHeader kicker="工作上下文" title="项目" copy="把相关对话、文件和诊疗目标放在同一上下文中，便于连续处理。" />
       <section className="project-create" aria-label="创建项目">
         <FolderPlus size={22} />
         <div>

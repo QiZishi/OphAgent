@@ -234,6 +234,7 @@ async def create_artifact_from_run(
         item
         for event in events
         if event.type == "retrieval.result"
+        and int(event.data.get("execution_revision", 1)) == run.execution_revision
         for item in event.data.get("evidence", [])
         if isinstance(item, dict)
     ]

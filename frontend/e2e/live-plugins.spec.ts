@@ -3,7 +3,9 @@ import { expect, test } from "@playwright/test";
 
 test("真实影像可串联病灶定位、辅助评估和报告生成", { tag: "@desktop" }, async ({ page }, testInfo) => {
   test.skip(!process.env.RUN_LIVE_AGENT_E2E, "仅在显式启用真实模型验收时运行");
-  test.setTimeout(300_000);
+  // One hidden execution replay is allowed when a required provider remains
+  // unavailable after its own bounded HTTP retries.
+  test.setTimeout(660_000);
 
   const failedResponses: string[] = [];
   const pageErrors: string[] = [];
@@ -38,7 +40,7 @@ test("真实影像可串联病灶定位、辅助评估和报告生成", { tag: "
   );
   await page.getByRole("button", { name: "发送" }).click();
   await expect(page.getByRole("button", { name: "停止当前任务" })).toBeVisible();
-  await expect(page.locator(".artifact-card").first()).toBeVisible({ timeout: 240_000 });
+  await expect(page.locator(".artifact-card").first()).toBeVisible({ timeout: 600_000 });
   await expect(page.getByLabel("本次提问的附件").locator("img")).toBeVisible();
   await expect(page.getByLabel("专业插件结果")).toBeVisible();
   await expect(page.getByText(/支持程度不是患病概率/)).toBeVisible();

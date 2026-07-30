@@ -10,11 +10,14 @@ from app.domain.models import (
     Artifact,
     AttachmentRecord,
     EvidenceItem,
+    InterventionMode,
+    InterventionStatus,
     NodeStatus,
     PlanNode,
     RiskLevel,
     RunEvent,
     RunInput,
+    RunIntervention,
     RunRecord,
     RunStatus,
 )
@@ -28,6 +31,7 @@ from app.runtime.errors import (
 )
 from app.runtime.orchestrator import (
     RunOrchestrator,
+    _clean_public_answer,
     _moderate_unconfirmed_medical_language,
     _sanitize_public_image_context,
 )
@@ -66,9 +70,23 @@ def test_image_context_sanitizer_preserves_uploaded_image_fact_and_empty_regions
 
     assert "未提供可交互的原始图像" not in cleaned
     assert "基于文本描述推断" not in cleaned
-    assert "定位校验结果" in cleaned
-    assert "未在原图补画边界" in cleaned
+    assert "定位结果" in cleaned
+    assert "未获得可显示的坐标定位" in cleaned
     assert "当前资料支持程度" in cleaned
+
+
+def test_public_answer_removes_generic_safety_boilerplate_but_keeps_requested_content():
+    cleaned = _clean_public_answer(
+        "## 回答\n青光眼随访通常关注眼压与视野。\n\n"
+        "## 免责声明\n本系统用于研究级诊疗增强，不能替代医生诊断。\n\n"
+        "## 下一步\n按计划复查。"
+    )
+
+    assert "青光眼随访通常关注眼压与视野" in cleaned
+    assert "按计划复查" in cleaned
+    assert "免责声明" not in cleaned
+    assert "研究级诊疗增强" not in cleaned
+    assert "不能替代" not in cleaned
 
 
 def test_routine_output_moderates_unconfirmed_staging_and_treatment_commands():
@@ -789,6 +807,7 @@ async def test_persistent_postprocessing_failure_rolls_back_and_regenerates_node
     assert RecoversAfterRollbackValidator.calls == 4
     assert len([event for event in events if event.type == "guardrail.retrying"]) == 2
     assert len([event for event in events if event.type == "agent.retrying"]) == 1
+    assert next(event for event in events if event.type == "agent.retrying").visibility == "internal"
 
 
 @pytest.mark.asyncio
@@ -1350,6 +1369,180 @@ async def test_concurrent_events_receive_unique_monotonic_sequences(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_terminal_output_bundle_is_invisible_until_cas_succeeds(tmp_path):
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    run = RunRecord(
+        user_id=7,
+        status=RunStatus.RUNNING,
+        input=RunInput(query="原子发布测试"),
+        plugin=plugin_registry.get("interactive_vqa"),
+    )
+    await store.create_run(run)
+    intervention = RunIntervention(
+        run_id=run.id,
+        user_id=7,
+        mode=InterventionMode.QUEUE,
+        content="终态前加入的新要求",
+        expected_attempt=1,
+        client_message_id="terminal-race",
+    )
+    await store.create_intervention(intervention)
+
+    run.answer = "OBSOLETE_OUTPUT_SENTINEL"
+    run.status = RunStatus.COMPLETED
+    obsolete_events = [
+        RunEvent(
+            run_id=run.id,
+            trace_id=run.trace_id,
+            type="answer.delta",
+            public_summary="正在生成回答",
+            data={"attempt": 1, "output_revision": 1, "delta": run.answer},
+        ),
+        RunEvent(
+            run_id=run.id,
+            trace_id=run.trace_id,
+            type="answer.completed",
+            public_summary="回答生成完成",
+            data={"attempt": 1, "output_revision": 1, "answer": run.answer},
+        ),
+    ]
+    obsolete_artifact = Artifact(
+        run_id=run.id,
+        user_id=7,
+        type="report",
+        title="不应发布",
+        mime_type="text/markdown",
+        content=run.answer,
+    )
+    committed = await store.commit_terminal(
+        run,
+        RunEvent(
+            run_id=run.id,
+            trace_id=run.trace_id,
+            type="run.completed",
+            public_summary="任务执行完成",
+            data={"attempt": 1},
+        ),
+        public_events=obsolete_events,
+        artifacts=[obsolete_artifact],
+    )
+
+    assert committed is False
+    assert await store.get_events(run.id) == []
+    assert await store.list_artifacts(7, run.id) == []
+    persisted = await store.get_run(run.id)
+    assert persisted is not None
+    assert persisted.status == RunStatus.RUNNING
+    assert persisted.answer is None
+
+    await store.update_intervention_status(
+        run.id,
+        intervention.id,
+        InterventionStatus.CANCELLED,
+    )
+    persisted.answer = "FINAL_OUTPUT"
+    persisted.status = RunStatus.COMPLETED
+    final_events = [
+        RunEvent(
+            run_id=run.id,
+            trace_id=run.trace_id,
+            type="answer.delta",
+            public_summary="正在生成回答",
+            data={"attempt": 1, "output_revision": 1, "delta": persisted.answer},
+        ),
+        RunEvent(
+            run_id=run.id,
+            trace_id=run.trace_id,
+            type="answer.completed",
+            public_summary="回答生成完成",
+            data={"attempt": 1, "output_revision": 1, "answer": persisted.answer},
+        ),
+    ]
+    final_artifact = obsolete_artifact.model_copy(
+        update={"id": "art_final", "title": "最终报告", "content": persisted.answer},
+    )
+    assert await store.commit_terminal(
+        persisted,
+        RunEvent(
+            run_id=run.id,
+            trace_id=run.trace_id,
+            type="run.completed",
+            public_summary="任务执行完成",
+            data={"attempt": 1},
+        ),
+        public_events=final_events,
+        artifacts=[final_artifact],
+    )
+    published_events = await store.get_events(run.id)
+    assert [event.type for event in published_events] == [
+        "answer.delta",
+        "answer.completed",
+        "run.completed",
+    ]
+    assert [event.sequence for event in published_events] == [1, 2, 3]
+    assert [item.id for item in await store.list_artifacts(7, run.id)] == ["art_final"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_conflict_with_cancelled_run_never_reschedules_or_publishes(tmp_path):
+    class CancelWinsStore(RuntimeStore):
+        async def commit_terminal(
+            self,
+            run,
+            event,
+            *,
+            public_events=(),
+            artifacts=(),
+        ):
+            if event.type == "run.completed":
+                current = await self.get_run(run.id)
+                assert current is not None
+                current.status = RunStatus.CANCELLED
+                cancelled = RunEvent(
+                    run_id=current.id,
+                    trace_id=current.trace_id,
+                    type="run.cancelled",
+                    public_summary="任务已取消",
+                    data={
+                        "attempt": current.attempt,
+                        "execution_revision": current.execution_revision,
+                    },
+                )
+                assert await super().commit_terminal(current, cancelled)
+                return False
+            return await super().commit_terminal(
+                run,
+                event,
+                public_events=public_events,
+                artifacts=artifacts,
+            )
+
+    config = build_settings(tmp_path)
+    store = CancelWinsStore(config)
+    runner = FakeRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="1+1等于多少？", plugin_id="interactive_vqa"),
+    )
+    current = await wait_for_terminal(store, run.id)
+    assert current.status == RunStatus.CANCELLED
+    events = await store.get_events(run.id)
+    cancelled_index = next(
+        index for index, item in enumerate(events) if item.type == "run.cancelled"
+    )
+    assert events[cancelled_index + 1:] == []
+    assert not any(item.type in {"answer.delta", "answer.completed"} for item in events)
+    assert await store.list_artifacts(7, run.id) == []
+
+
+@pytest.mark.asyncio
 async def test_idempotency_key_reuses_run_and_answer_stream_is_replayable(tmp_path):
     config = build_settings(tmp_path)
     store = RuntimeStore(config)
@@ -1444,6 +1637,57 @@ async def test_optional_imaging_failure_returns_partial_success(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_required_node_failure_replays_hidden_execution_with_feedback(tmp_path):
+    class ImagingFailsOnce(FakeCapabilityClients):
+        calls = 0
+
+        async def analyze_image(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                raise CapabilityUnavailable("sub_model", "首次请求超时")
+            assert "本影像步骤此前未完成" in request.question
+            assert "capability_unavailable" in request.question
+            return await super().analyze_image(request)
+
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    image = tmp_path / "eye.png"
+    image.write_bytes(b"image")
+    clients = ImagingFailsOnce()
+    orchestrator = RunOrchestrator(
+        store,
+        clients,
+        config,
+        runner_factory=lambda active_clients: FakeRunner(),
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(
+            query="请定位、评估并生成报告",
+            image_paths=[str(image)],
+            requested_plugins=[
+                "lesion_localizer",
+                "aux_diagnosis",
+                "report_generator",
+            ],
+        ),
+    )
+
+    current = await wait_for_terminal(store, run.id)
+    assert current.status == RunStatus.COMPLETED
+    assert current.execution_revision == 2
+    assert clients.calls == 2
+    assert all(node.status == NodeStatus.COMPLETED for node in current.plan if node.required)
+    imaging = next(node for node in current.plan if node.id == "imaging")
+    assert imaging.attempt == 2
+    assert imaging.recovery_feedback[-1]["issues"] == ["capability_unavailable"]
+    events = await store.get_events(run.id)
+    retry_event = next(event for event in events if event.type == "agent.retrying")
+    assert retry_event.visibility == "internal"
+    assert retry_event.data["execution_revision"] == 2
+
+
+@pytest.mark.asyncio
 async def test_repeated_cancel_emits_exactly_one_terminal_event(tmp_path):
     class SlowRunner(FakeRunner):
         async def ask(self, role, prompt):
@@ -1469,6 +1713,198 @@ async def test_repeated_cancel_emits_exactly_one_terminal_event(tmp_path):
     assert first.status == second.status == RunStatus.CANCELLED
     events = await store.get_events(run.id)
     assert len([event for event in events if event.type == "run.cancelled"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_queued_intervention_is_applied_fifo_at_next_node_boundary(tmp_path):
+    class BoundaryRunner(FakeRunner):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.prompts: list[str] = []
+
+        async def ask(self, role, prompt):
+            self.prompts.append(prompt)
+            if len(self.prompts) == 1:
+                self.started.set()
+                await self.release.wait()
+            return await super().ask(role, prompt)
+
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    runner = BoundaryRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="1+1等于多少？", plugin_id="interactive_vqa"),
+    )
+    await asyncio.wait_for(runner.started.wait(), timeout=1)
+    queued = await orchestrator.intervene(
+        run.id,
+        7,
+        mode=InterventionMode.QUEUE,
+        content="请同时说明计算过程，并保持两句话以内。",
+        attachment_ids=[],
+        expected_attempt=1,
+        client_message_id="queue-1",
+    )
+    assert queued.interventions[-1].status == InterventionStatus.QUEUED
+    runner.release.set()
+
+    current = await wait_for_terminal(store, run.id)
+    assert current.status == RunStatus.COMPLETED
+    assert current.attempt == 1
+    assert current.execution_revision == 2
+    assert len(runner.prompts) == 2
+    assert "请同时说明计算过程" in runner.prompts[-1]
+    assert "QueuedUserRequirement" in runner.prompts[-1]
+    assert current.interventions[-1].status == InterventionStatus.APPLIED
+    events = await store.get_events(run.id)
+    assert [event.type for event in events].count("user.intervention_applied") == 1
+
+
+@pytest.mark.asyncio
+async def test_queued_intervention_can_be_cancelled_before_boundary(tmp_path):
+    class BoundaryRunner(FakeRunner):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+            self.calls = 0
+
+        async def ask(self, role, prompt):
+            self.calls += 1
+            self.started.set()
+            await self.release.wait()
+            return await super().ask(role, prompt)
+
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    runner = BoundaryRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="1+1等于多少？", plugin_id="interactive_vqa"),
+    )
+    await asyncio.wait_for(runner.started.wait(), timeout=1)
+    queued = await orchestrator.intervene(
+        run.id,
+        7,
+        mode=InterventionMode.QUEUE,
+        content="这一条稍后取消",
+        attachment_ids=[],
+        expected_attempt=1,
+        client_message_id="queue-cancel",
+    )
+    intervention_id = queued.interventions[-1].id
+    cancelled = await orchestrator.cancel_intervention(run.id, intervention_id, 7)
+    assert cancelled.interventions[-1].status == InterventionStatus.CANCELLED
+    runner.release.set()
+
+    current = await wait_for_terminal(store, run.id)
+    assert current.status == RunStatus.COMPLETED
+    assert runner.calls == 1
+    assert "这一条稍后取消" not in current.input.query
+
+
+@pytest.mark.asyncio
+async def test_intervention_rejects_stale_attempt_without_mutating_run(tmp_path):
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    run = RunRecord(
+        user_id=7,
+        status=RunStatus.RUNNING,
+        input=RunInput(query="正在执行"),
+        plugin=plugin_registry.get("interactive_vqa"),
+        attempt=2,
+    )
+    await store.create_run(run)
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: FakeRunner(),
+    )
+
+    with pytest.raises(ValueError, match="第 2 次执行"):
+        await orchestrator.intervene(
+            run.id,
+            7,
+            mode=InterventionMode.QUEUE,
+            content="来自旧页面的要求",
+            attachment_ids=[],
+            expected_attempt=1,
+            client_message_id="stale-attempt",
+        )
+    current = await store.get_run(run.id)
+    assert current and current.interventions == []
+    assert current.input.query == "正在执行"
+
+
+@pytest.mark.asyncio
+async def test_interrupt_intervention_resumes_with_reason_and_new_attempt(tmp_path):
+    class InterruptibleRunner(FakeRunner):
+        def __init__(self):
+            super().__init__()
+            self.started = asyncio.Event()
+            self.prompts: list[str] = []
+
+        async def ask(self, role, prompt):
+            self.prompts.append(prompt)
+            if len(self.prompts) == 1:
+                self.started.set()
+                await asyncio.sleep(30)
+            return await super().ask(role, prompt)
+
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    runner = InterruptibleRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="1+1等于多少？", plugin_id="interactive_vqa"),
+    )
+    await asyncio.wait_for(runner.started.wait(), timeout=1)
+    resumed = await orchestrator.intervene(
+        run.id,
+        7,
+        mode=InterventionMode.INTERRUPT,
+        content="改为回答 2+2，并解释为什么之前的任务被替换。",
+        attachment_ids=[],
+        expected_attempt=1,
+        client_message_id="interrupt-1",
+    )
+    assert resumed.attempt == 2
+    assert resumed.execution_revision == 2
+    assert resumed.status in {RunStatus.QUEUED, RunStatus.RUNNING}
+
+    current = await wait_for_terminal(store, run.id)
+    assert current.status == RunStatus.COMPLETED
+    assert current.attempt == 2
+    assert current.execution_revision == 2
+    assert len(runner.prompts) >= 2
+    assert all("改为回答 2+2" in prompt for prompt in runner.prompts[1:])
+    assert any("UserInterrupted" in prompt for prompt in runner.prompts[1:])
+    event_types = [event.type for event in await store.get_events(run.id)]
+    assert "run.interrupted" in event_types
+    assert "run.resumed" in event_types
+    assert current.interventions[-1].status == InterventionStatus.APPLIED
 
 
 @pytest.mark.asyncio
@@ -1542,7 +1978,8 @@ async def test_standard_run_completes_with_evidence_without_forced_report(tmp_pa
         await asyncio.sleep(0.01)
     assert current is not None
     assert current.status == RunStatus.COMPLETED
-    assert "不能替代医生诊断" in (current.answer or "")
+    assert "当前资料支持以下初步评估" in (current.answer or "")
+    assert "不能替代医生诊断" not in (current.answer or "")
     assert current.clinical_state.unresolved_questions
     assessment = next(node for node in current.plan if node.id == "assessment")
     assert assessment.output

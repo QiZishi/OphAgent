@@ -13,7 +13,17 @@ from collections.abc import AsyncIterator, Iterable
 from pathlib import Path
 
 from app.core.config import Settings, settings
-from app.domain.models import Artifact, AttachmentRecord, RunEvent, RunRecord, RunStatus, utc_now
+from app.domain.models import (
+    Artifact,
+    AttachmentRecord,
+    InterventionMode,
+    InterventionStatus,
+    RunEvent,
+    RunIntervention,
+    RunRecord,
+    RunStatus,
+    utc_now,
+)
 
 TERMINAL = {
     RunStatus.COMPLETED,
@@ -136,6 +146,23 @@ class RuntimeStore:
                     ON runtime_attachments(user_id, created_at DESC);
                 CREATE INDEX IF NOT EXISTS ix_runtime_attachment_conversation
                     ON runtime_attachments(conversation_id);
+
+                CREATE TABLE IF NOT EXISTS runtime_interventions (
+                    id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL,
+                    user_id INTEGER NOT NULL,
+                    mode TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    expected_attempt INTEGER NOT NULL,
+                    client_message_id TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES runtime_runs(id) ON DELETE CASCADE,
+                    UNIQUE(run_id, client_message_id)
+                );
+                CREATE INDEX IF NOT EXISTS ix_runtime_intervention_run_status
+                    ON runtime_interventions(run_id, status, created_at);
                 """
             )
             # Older prototypes enforced one event per terminal *type* for the
@@ -339,7 +366,11 @@ class RuntimeStore:
                 "SELECT payload_json FROM runtime_runs WHERE id = ?",
                 (run_id,),
             ).fetchone()
-        return RunRecord.model_validate_json(row["payload_json"]) if row else None
+            if row is None:
+                return None
+            run = RunRecord.model_validate_json(row["payload_json"])
+            run.interventions = self._load_interventions(connection, run.id)
+        return run
 
     async def list_runs(self, user_id: int, limit: int = 50) -> list[RunRecord]:
         with self._connect() as connection:
@@ -352,7 +383,10 @@ class RuntimeStore:
                 """,
                 (user_id, limit),
             ).fetchall()
-        return [RunRecord.model_validate_json(row["payload_json"]) for row in rows]
+            runs = [RunRecord.model_validate_json(row["payload_json"]) for row in rows]
+            for run in runs:
+                run.interventions = self._load_interventions(connection, run.id)
+        return runs
 
     async def list_conversation_runs(
         self,
@@ -371,10 +405,13 @@ class RuntimeStore:
                 """,
                 (user_id, conversation_id, limit),
             ).fetchall()
-        return [
-            RunRecord.model_validate_json(row["payload_json"])
-            for row in reversed(rows)
-        ]
+            runs = [
+                RunRecord.model_validate_json(row["payload_json"])
+                for row in reversed(rows)
+            ]
+            for run in runs:
+                run.interventions = self._load_interventions(connection, run.id)
+        return runs
 
     async def save_context_snapshot(self, snapshot, cache_key: str) -> None:
         with self._connect() as connection:
@@ -429,7 +466,10 @@ class RuntimeStore:
             rows = connection.execute(
                 "SELECT payload_json FROM runtime_runs ORDER BY created_at"
             ).fetchall()
-        return [RunRecord.model_validate_json(row["payload_json"]) for row in rows]
+            runs = [RunRecord.model_validate_json(row["payload_json"]) for row in rows]
+            for run in runs:
+                run.interventions = self._load_interventions(connection, run.id)
+        return runs
 
     async def find_run_by_idempotency(
         self,
@@ -446,7 +486,166 @@ class RuntimeStore:
                 """,
                 (user_id, idempotency_key),
             ).fetchone()
-        return RunRecord.model_validate_json(row["payload_json"]) if row else None
+            if row is None:
+                return None
+            run = RunRecord.model_validate_json(row["payload_json"])
+            run.interventions = self._load_interventions(connection, run.id)
+        return run
+
+    @staticmethod
+    def _load_interventions(
+        connection: sqlite3.Connection,
+        run_id: str,
+    ) -> list[RunIntervention]:
+        rows = connection.execute(
+            """
+            SELECT payload_json FROM runtime_interventions
+            WHERE run_id = ?
+            ORDER BY created_at, id
+            """,
+            (run_id,),
+        ).fetchall()
+        return [
+            RunIntervention.model_validate_json(row["payload_json"])
+            for row in rows
+        ]
+
+    async def create_intervention(
+        self,
+        intervention: RunIntervention,
+    ) -> RunIntervention:
+        """Append an intervention without racing the worker's Run CAS writes."""
+
+        async with self._lock(intervention.run_id):
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT payload_json FROM runtime_runs WHERE id = ?",
+                    (intervention.run_id,),
+                ).fetchone()
+                if row is None:
+                    connection.rollback()
+                    raise KeyError(intervention.run_id)
+                run = RunRecord.model_validate_json(row["payload_json"])
+                if run.user_id != intervention.user_id:
+                    connection.rollback()
+                    raise KeyError(intervention.run_id)
+                if run.attempt != intervention.expected_attempt:
+                    connection.rollback()
+                    raise ValueError(
+                        f"任务已进入第 {run.attempt} 次执行，请刷新后重新提交"
+                    )
+                if run.status not in {RunStatus.QUEUED, RunStatus.RUNNING}:
+                    connection.rollback()
+                    raise ValueError("当前任务已经不再执行，无法追加要求")
+                try:
+                    connection.execute(
+                        """
+                        INSERT INTO runtime_interventions
+                            (id, run_id, user_id, mode, status, expected_attempt,
+                             client_message_id, payload_json, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            intervention.id,
+                            intervention.run_id,
+                            intervention.user_id,
+                            intervention.mode.value,
+                            intervention.status.value,
+                            intervention.expected_attempt,
+                            intervention.client_message_id,
+                            intervention.model_dump_json(),
+                            intervention.created_at.isoformat(),
+                            intervention.created_at.isoformat(),
+                        ),
+                    )
+                except sqlite3.IntegrityError:
+                    existing = connection.execute(
+                        """
+                        SELECT payload_json FROM runtime_interventions
+                        WHERE run_id = ? AND client_message_id = ?
+                        """,
+                        (intervention.run_id, intervention.client_message_id),
+                    ).fetchone()
+                    connection.rollback()
+                    if existing is None:
+                        raise
+                    return RunIntervention.model_validate_json(existing["payload_json"])
+                connection.commit()
+        async with self._condition(intervention.run_id):
+            self._condition(intervention.run_id).notify_all()
+        return intervention
+
+    async def list_interventions(
+        self,
+        run_id: str,
+        *,
+        status: InterventionStatus | None = None,
+        mode: InterventionMode | None = None,
+    ) -> list[RunIntervention]:
+        with self._connect() as connection:
+            query = "SELECT payload_json FROM runtime_interventions WHERE run_id = ?"
+            values: list[object] = [run_id]
+            if status is not None:
+                query += " AND status = ?"
+                values.append(status.value)
+            if mode is not None:
+                query += " AND mode = ?"
+                values.append(mode.value)
+            query += " ORDER BY created_at, id"
+            rows = connection.execute(query, values).fetchall()
+        return [
+            RunIntervention.model_validate_json(row["payload_json"])
+            for row in rows
+        ]
+
+    async def update_intervention_status(
+        self,
+        run_id: str,
+        intervention_id: str,
+        status: InterventionStatus,
+    ) -> RunIntervention:
+        async with self._lock(run_id):
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    """
+                    SELECT payload_json FROM runtime_interventions
+                    WHERE id = ? AND run_id = ?
+                    """,
+                    (intervention_id, run_id),
+                ).fetchone()
+                if row is None:
+                    connection.rollback()
+                    raise KeyError(intervention_id)
+                intervention = RunIntervention.model_validate_json(row["payload_json"])
+                if intervention.status != InterventionStatus.QUEUED:
+                    connection.rollback()
+                    return intervention
+                now = utc_now()
+                intervention.status = status
+                if status == InterventionStatus.APPLIED:
+                    intervention.applied_at = now
+                elif status == InterventionStatus.CANCELLED:
+                    intervention.cancelled_at = now
+                connection.execute(
+                    """
+                    UPDATE runtime_interventions
+                    SET status = ?, payload_json = ?, updated_at = ?
+                    WHERE id = ? AND run_id = ?
+                    """,
+                    (
+                        status.value,
+                        intervention.model_dump_json(),
+                        now.isoformat(),
+                        intervention_id,
+                        run_id,
+                    ),
+                )
+                connection.commit()
+        async with self._condition(run_id):
+            self._condition(run_id).notify_all()
+        return intervention
 
     async def append_event(self, event: RunEvent) -> None:
         async with self._lock(event.run_id):
@@ -498,10 +697,27 @@ class RuntimeStore:
         async with self._condition(event.run_id):
             self._condition(event.run_id).notify_all()
 
-    async def commit_terminal(self, run: RunRecord, event: RunEvent) -> bool:
-        """Atomically persist a terminal state and its per-attempt event."""
+    async def commit_terminal(
+        self,
+        run: RunRecord,
+        event: RunEvent,
+        *,
+        public_events: Iterable[RunEvent] = (),
+        artifacts: Iterable[Artifact] = (),
+    ) -> bool:
+        """Atomically publish one terminal revision and all of its public output.
+
+        No answer delta or artifact becomes observable until the Run has won
+        the terminal compare-and-swap and no queued intervention remains.
+        """
         if run.status not in TERMINAL or event.type not in FINAL_EVENT_TYPES:
             raise ValueError("commit_terminal 只接受终态及终态事件")
+        bundled_events = [*public_events, event]
+        bundled_artifacts = list(artifacts)
+        if any(item.run_id != run.id for item in bundled_events):
+            raise ValueError("终态事件必须属于同一个 Run")
+        if any(item.run_id != run.id or item.user_id != run.user_id for item in bundled_artifacts):
+            raise ValueError("终态产物必须属于同一个 Run 和用户")
         async with self._lock(run.id):
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
@@ -514,6 +730,21 @@ class RuntimeStore:
                     raise KeyError(run.id)
                 current = RunRecord.model_validate_json(row["payload_json"])
                 if run.version != int(row["version"]):
+                    connection.rollback()
+                    return False
+                pending_intervention = connection.execute(
+                    """
+                    SELECT 1 FROM runtime_interventions
+                    WHERE run_id = ? AND status = ? AND expected_attempt = ?
+                    LIMIT 1
+                    """,
+                    (
+                        run.id,
+                        InterventionStatus.QUEUED.value,
+                        run.attempt,
+                    ),
+                ).fetchone()
+                if pending_intervention is not None:
                     connection.rollback()
                     return False
                 if current.status in TERMINAL and current.status != run.status:
@@ -546,7 +777,7 @@ class RuntimeStore:
                     "SELECT COALESCE(MAX(sequence), 0) AS sequence FROM runtime_events WHERE run_id = ?",
                     (run.id,),
                 ).fetchone()
-                event.sequence = int(sequence_row["sequence"]) + 1
+                next_sequence = int(sequence_row["sequence"]) + 1
                 connection.execute(
                     """
                     UPDATE runtime_runs
@@ -564,21 +795,40 @@ class RuntimeStore:
                         run.id,
                     ),
                 )
-                connection.execute(
-                    """
-                    INSERT INTO runtime_events
-                        (run_id, sequence, event_id, type, payload_json, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event.run_id,
-                        event.sequence,
-                        event.id,
-                        event.type,
-                        event.model_dump_json(),
-                        event.timestamp.isoformat(),
-                    ),
-                )
+                for artifact in bundled_artifacts:
+                    connection.execute(
+                        """
+                        INSERT INTO runtime_artifacts
+                            (id, run_id, user_id, payload_json, created_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(id) DO UPDATE SET payload_json = excluded.payload_json
+                        """,
+                        (
+                            artifact.id,
+                            artifact.run_id,
+                            artifact.user_id,
+                            artifact.model_dump_json(),
+                            artifact.created_at.isoformat(),
+                        ),
+                    )
+                for bundled_event in bundled_events:
+                    bundled_event.sequence = next_sequence
+                    next_sequence += 1
+                    connection.execute(
+                        """
+                        INSERT INTO runtime_events
+                            (run_id, sequence, event_id, type, payload_json, created_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            bundled_event.run_id,
+                            bundled_event.sequence,
+                            bundled_event.id,
+                            bundled_event.type,
+                            bundled_event.model_dump_json(),
+                            bundled_event.timestamp.isoformat(),
+                        ),
+                    )
                 connection.commit()
         async with self._condition(event.run_id):
             self._condition(event.run_id).notify_all()

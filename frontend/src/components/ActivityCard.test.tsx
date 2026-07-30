@@ -33,6 +33,7 @@ const run: Run = {
   }],
   warnings: [],
   attempt: 1,
+  execution_revision: 1,
   budget: {
     model_calls: 1,
     prompt_tokens: 20,
@@ -49,5 +50,25 @@ describe("ActivityCard", () => {
     expect(screen.getByRole("button", { name: /已完成/ })).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(screen.getByRole("button", { name: /已完成/ }));
     expect(screen.getByText("生成回答")).toBeVisible();
+  });
+
+  it("失败节点不展示内部异常或校验细节", () => {
+    const failedRun: Run = {
+      ...run,
+      status: "failed",
+      error_message: "本次任务未能完成，可以从检查点重试。",
+      plan: [{
+        ...run.plan[0],
+        status: "failed",
+        output: {
+          detail: "citation_coverage_failed: INTERNAL_SENTINEL",
+          output_validation: { issues: ["INTERNAL_SENTINEL"] },
+        },
+      }],
+    };
+    render(<ActivityCard run={failedRun} events={[]} onResume={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /处理未完成/ }));
+    expect(screen.queryByText(/INTERNAL_SENTINEL/)).not.toBeInTheDocument();
+    expect(screen.getByText("本次任务未能完成，可以从检查点重试。")).toBeVisible();
   });
 });

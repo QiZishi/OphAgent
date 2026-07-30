@@ -20,12 +20,15 @@ from app.domain.models import (
     ContextStats,
     EvidenceItem,
     ImageRegion,
+    InterventionMode,
+    InterventionStatus,
     MemoryRecord,
     NodeStatus,
     RiskLevel,
     RunBudget,
     RunEvent,
     RunInput,
+    RunIntervention,
     RunRecord,
     RunStatus,
     TaskComplexity,
@@ -51,13 +54,14 @@ from app.runtime.errors import (
 )
 from app.runtime.governance import bounded_preference_context, untrusted_data_envelope
 from app.runtime.planning import build_plan
+from app.runtime.public_projection import public_plan_nodes
 from app.runtime.routing import is_contextual_follow_up, route_task
 from app.runtime.safety import (
     apply_red_flag_gate,
     emergency_banner,
     validate_public_medical_output,
 )
-from app.runtime.store import FINAL_EVENT_TYPES, RuntimeStore
+from app.runtime.store import FINAL_EVENT_TYPES, TERMINAL, RuntimeStore
 from app.services.memory_evolution import parse_online_memory_commands
 from app.services.provider_config import ProviderConfigStore
 from app.services.state import MemoryStore
@@ -112,6 +116,17 @@ _TERMINAL_RETRY_GUIDANCE = {
         "结合检查、禁忌和用药史评估后决定。"
     ),
 }
+
+_INTERNAL_EVENT_TYPES = {
+    "agent.retrying",
+    "citation.degraded",
+    "context.compaction_failed",
+    "context.compaction_retrying",
+    "guardrail.fallback",
+    "guardrail.retrying",
+    "tool.failed",
+}
+_MAX_AUTOMATIC_NODE_ATTEMPTS = 2
 
 
 def _terminal_retry_feedback(exc: Exception) -> dict[str, Any]:
@@ -193,6 +208,7 @@ class RunOrchestrator:
         )
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancelled: set[str] = set()
+        self._interruptions: dict[str, str] = {}
 
     async def create(self, user_id: int, run_input: RunInput) -> RunRecord:
         run_input = run_input.model_copy(deep=True)
@@ -344,7 +360,7 @@ class RunOrchestrator:
             run,
             "plan.created",
             f"已建立包含 {len(run.plan)} 个节点的执行计划",
-            data={"nodes": [node.model_dump(mode="json") for node in run.plan]},
+            data={"nodes": public_plan_nodes(run.plan)},
         )
         if "lesion_localizer" in route.selected_plugins and not run.input.image_paths:
             run.status = RunStatus.WAITING
@@ -399,6 +415,17 @@ class RunOrchestrator:
                 status=run.status,
                 error_code="worker_interrupted",
             )
+            pending_interrupts = await self.store.list_interventions(
+                run.id,
+                status=InterventionStatus.QUEUED,
+                mode=InterventionMode.INTERRUPT,
+            )
+            if pending_interrupts:
+                await self._resume_with_intervention(
+                    run.id,
+                    run.user_id,
+                    pending_interrupts[0].id,
+                )
 
     async def cancel(self, run_id: str, user_id: int) -> RunRecord:
         run = await self._owned_run(run_id, user_id)
@@ -418,10 +445,165 @@ class RunOrchestrator:
             if node.status in {NodeStatus.PENDING, NodeStatus.RUNNING}:
                 node.status = NodeStatus.CANCELLED
         await self.store.save_run(run, allow_resume=True)
+        for intervention in await self.store.list_interventions(
+            run_id,
+            status=InterventionStatus.QUEUED,
+        ):
+            await self.store.update_intervention_status(
+                run_id,
+                intervention.id,
+                InterventionStatus.CANCELLED,
+            )
         await self._event(run, "run.cancelled", "任务已取消", status=run.status)
         if task and not task.done():
             await asyncio.gather(task, return_exceptions=True)
         return run
+
+    async def intervene(
+        self,
+        run_id: str,
+        user_id: int,
+        *,
+        mode: InterventionMode,
+        content: str | None,
+        attachment_ids: list[str],
+        expected_attempt: int,
+        client_message_id: str,
+    ) -> RunRecord:
+        """Queue input or interrupt an active attempt and resume from its checkpoint."""
+
+        for attachment_id in attachment_ids:
+            attachment = await self.store.get_attachment(attachment_id)
+            if attachment is None or attachment.user_id != user_id:
+                raise ValueError(f"附件不存在或无权访问：{attachment_id}")
+        intervention = RunIntervention(
+            run_id=run_id,
+            user_id=user_id,
+            mode=mode,
+            content=content,
+            attachment_ids=attachment_ids,
+            expected_attempt=expected_attempt,
+            client_message_id=client_message_id,
+        )
+        intervention = await self.store.create_intervention(intervention)
+        run = await self._owned_run(run_id, user_id)
+        await self._event(
+            run,
+            (
+                "user.intervention_queued"
+                if mode == InterventionMode.QUEUE
+                else "user.interrupt_requested"
+            ),
+            (
+                "新要求已排队，将在下一执行节点前加入上下文"
+                if mode == InterventionMode.QUEUE
+                else "已收到新要求，正在中断当前步骤并从检查点继续"
+            ),
+            data={
+                "intervention_id": intervention.id,
+                "mode": mode.value,
+                "expected_attempt": expected_attempt,
+                "has_attachments": bool(attachment_ids),
+            },
+        )
+        if mode == InterventionMode.QUEUE:
+            refreshed = await self.store.get_run(run_id)
+            return refreshed or run
+
+        if intervention.status != InterventionStatus.QUEUED:
+            refreshed = await self.store.get_run(run_id)
+            return refreshed or run
+        self._interruptions[run_id] = intervention.id
+        task = self._tasks.get(run_id)
+        if task and not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+        else:
+            run.status = RunStatus.INTERRUPTED
+            for node in run.plan:
+                if node.status == NodeStatus.RUNNING:
+                    node.status = NodeStatus.PENDING
+                    node.started_at = None
+            await self.store.save_run(run)
+        self._interruptions.pop(run_id, None)
+        return await self._resume_with_intervention(run_id, user_id, intervention.id)
+
+    async def cancel_intervention(
+        self,
+        run_id: str,
+        intervention_id: str,
+        user_id: int,
+    ) -> RunRecord:
+        run = await self._owned_run(run_id, user_id)
+        intervention = next(
+            (item for item in run.interventions if item.id == intervention_id),
+            None,
+        )
+        if (
+            intervention is None
+            or intervention.mode != InterventionMode.QUEUE
+            or intervention.status != InterventionStatus.QUEUED
+        ):
+            raise ValueError("该排队要求不存在或已被处理")
+        await self.store.update_intervention_status(
+            run_id,
+            intervention_id,
+            InterventionStatus.CANCELLED,
+        )
+        await self._event(
+            run,
+            "user.intervention_cancelled",
+            "已取消排队中的追加要求",
+            data={"intervention_id": intervention_id},
+        )
+        refreshed = await self.store.get_run(run_id)
+        return refreshed or run
+
+    async def _resume_with_intervention(
+        self,
+        run_id: str,
+        user_id: int,
+        intervention_id: str,
+    ) -> RunRecord:
+        run = await self._owned_run(run_id, user_id)
+        intervention = next(
+            (item for item in run.interventions if item.id == intervention_id),
+            None,
+        )
+        if intervention is None:
+            raise ValueError("打断要求不存在")
+        if intervention.id not in run.applied_intervention_ids:
+            await self._apply_interventions_to_run(
+                run,
+                [intervention],
+                increment_attempt=True,
+            )
+            if not await self.store.save_run(run, allow_resume=True):
+                raise ValueError("任务状态已变化，请刷新后重试")
+        await self.store.update_intervention_status(
+            run_id,
+            intervention.id,
+            InterventionStatus.APPLIED,
+        )
+        await self._event(
+            run,
+            "user.intervention_applied",
+            "新要求已写入恢复上下文，任务将从检查点继续",
+            data={
+                "intervention_id": intervention.id,
+                "mode": intervention.mode.value,
+                "attempt": run.attempt,
+            },
+        )
+        await self._event(
+            run,
+            "run.resumed",
+            "任务已根据新要求从检查点恢复",
+            data={"attempt": run.attempt, "cause": "user_interruption"},
+        )
+        self._spawn(run_id)
+        refreshed = await self.store.get_run(run_id)
+        return refreshed or run
 
     async def resume(self, run_id: str, user_id: int) -> RunRecord:
         run = await self._owned_run(run_id, user_id)
@@ -483,6 +665,7 @@ class RunOrchestrator:
                 node.started_at = None
                 node.completed_at = None
         run.attempt += 1
+        run.execution_revision += 1
         if run.budget.prompt_tokens + run.budget.completion_tokens >= run.budget.max_tokens:
             run.budget.max_tokens = min(
                 self.config.RUN_MAX_TOKENS,
@@ -629,6 +812,7 @@ class RunOrchestrator:
             reserve,
         )
         run.plan = build_plan(run.plugin, run.input, run.risk_level, run.route)
+        run.execution_revision += 1
         run.pending_question = None
         run.status = RunStatus.QUEUED
         await self.store.save_run(run)
@@ -644,7 +828,7 @@ class RunOrchestrator:
             run,
             "plan.updated",
             "已接收补充信息，仅执行新的计划节点",
-            data={"nodes": [node.model_dump(mode="json") for node in run.plan]},
+            data={"nodes": public_plan_nodes(run.plan)},
         )
         self._spawn(run.id)
         return run
@@ -665,6 +849,165 @@ class RunOrchestrator:
         if run is None or run.user_id != user_id:
             raise KeyError(run_id)
         return run
+
+    async def _apply_queued_interventions(self, run: RunRecord) -> bool:
+        queued = await self.store.list_interventions(
+            run.id,
+            status=InterventionStatus.QUEUED,
+            mode=InterventionMode.QUEUE,
+        )
+        queued = [
+            item
+            for item in queued
+            if item.expected_attempt == run.attempt
+            and item.id not in run.applied_intervention_ids
+        ]
+        if not queued:
+            return False
+        await self._apply_interventions_to_run(run, queued, increment_attempt=False)
+        if not await self.store.save_run(run):
+            raise RuntimeError("追加要求写入时任务状态发生变化，请从检查点恢复")
+        for intervention in queued:
+            await self.store.update_intervention_status(
+                run.id,
+                intervention.id,
+                InterventionStatus.APPLIED,
+            )
+            await self._event(
+                run,
+                "user.intervention_applied",
+                "排队要求已在新节点执行前加入上下文",
+                data={
+                    "intervention_id": intervention.id,
+                    "mode": intervention.mode.value,
+                    "attempt": run.attempt,
+                },
+            )
+        await self._event(
+            run,
+            "plan.updated",
+            f"已按顺序接收 {len(queued)} 条排队要求并更新后续计划",
+            data={"nodes": public_plan_nodes(run.plan)},
+        )
+        return True
+
+    async def _apply_interventions_to_run(
+        self,
+        run: RunRecord,
+        interventions: list[RunIntervention],
+        *,
+        increment_attempt: bool,
+    ) -> None:
+        """Merge user input, reroute, and preserve only request-independent checkpoints."""
+
+        added_attachments = False
+        directive_lines: list[str] = []
+        for intervention in interventions:
+            for attachment_id in intervention.attachment_ids:
+                attachment = await self.store.get_attachment(attachment_id)
+                if attachment is None or attachment.user_id != run.user_id:
+                    raise ValueError(f"附件不存在或无权访问：{attachment_id}")
+                target = {
+                    "image": run.input.image_paths,
+                    "document": run.input.document_paths,
+                    "audio": run.input.audio_paths,
+                }[attachment.kind]
+                if attachment.stored_path not in target:
+                    target.append(attachment.stored_path)
+                    added_attachments = True
+                if attachment_id not in run.input.attachment_ids:
+                    run.input.attachment_ids.append(attachment_id)
+            content = (intervention.content or "").strip()
+            if content:
+                run.user_inputs.append(content)
+                directive_lines.append(content)
+                detected = apply_red_flag_gate(content, run.clinical_state)
+                risk_order = {
+                    RiskLevel.ROUTINE: 0,
+                    RiskLevel.COMPLEX: 1,
+                    RiskLevel.HIGH: 2,
+                    RiskLevel.EMERGENCY: 3,
+                }
+                if risk_order[detected] > risk_order[run.risk_level]:
+                    run.risk_level = detected
+            run.applied_intervention_ids.append(intervention.id)
+
+        if directive_lines:
+            numbered = "\n".join(
+                f"{index}. {line}"
+                for index, line in enumerate(directive_lines, start=1)
+            )
+            run.input.query = (
+                f"{run.input.query}\n\n"
+                "【用户在执行期间追加的要求；后续步骤必须遵循】\n"
+                f"{numbered}"
+            )
+        run.input.image_paths = list(dict.fromkeys(run.input.image_paths))
+        run.input.document_paths = list(dict.fromkeys(run.input.document_paths))
+        run.input.audio_paths = list(dict.fromkeys(run.input.audio_paths))
+        previous_nodes = {node.id: node for node in run.plan}
+        run.route = route_task(run.input, run.risk_level, run.route)
+        preservable = {"imaging", "documents", "audio"} if not added_attachments else set()
+        merged_plan = []
+        for fresh in build_plan(run.plugin, run.input, run.risk_level, run.route):
+            previous = previous_nodes.get(fresh.id)
+            if (
+                previous is not None
+                and previous.status == NodeStatus.COMPLETED
+                and fresh.id in preservable
+            ):
+                merged_plan.append(previous.model_copy(deep=True))
+                continue
+            fresh.recovery_feedback = [
+                *(previous.recovery_feedback[-2:] if previous else []),
+                {
+                    "failed_stage": previous.id if previous else fresh.id,
+                    "error_type": (
+                        "UserInterrupted"
+                        if increment_attempt
+                        else "QueuedUserRequirement"
+                    ),
+                    "issues": [
+                        (
+                            "当前步骤因用户追加新要求而被中断"
+                            if increment_attempt
+                            else "用户在上一节点执行期间排队了新要求"
+                        )
+                    ],
+                    "required_corrections": [
+                        "重新执行时必须读取本轮输入末尾的追加要求，"
+                        "明确响应新要求，不得重复导致上一轮方向失效的输出。"
+                    ],
+                },
+            ]
+            merged_plan.append(fresh)
+        run.plan = merged_plan
+        if increment_attempt:
+            run.attempt += 1
+        run.execution_revision += 1
+        pending_count = sum(node.status == NodeStatus.PENDING for node in run.plan)
+        run.budget.max_model_calls = min(
+            self.config.RUN_MAX_MODEL_CALLS,
+            max(run.budget.max_model_calls, run.budget.model_calls + pending_count + 1),
+        )
+        run.budget.max_tokens = min(
+            self.config.RUN_MAX_TOKENS,
+            max(
+                run.budget.max_tokens,
+                run.budget.prompt_tokens
+                + run.budget.completion_tokens
+                + max(2_000, run.budget.reserved_output_tokens),
+            ),
+        )
+        run.answer = None
+        run.error_code = None
+        run.error_message = None
+        run.pending_question = None
+        run.status = RunStatus.QUEUED if increment_attempt else RunStatus.RUNNING
+        if run.risk_level == RiskLevel.EMERGENCY:
+            banner = emergency_banner(run.clinical_state)
+            if banner and banner not in run.warnings:
+                run.warnings.append(banner)
 
     async def _execute(self, run_id: str) -> None:
         run = await self.store.get_run(run_id)
@@ -697,7 +1040,13 @@ class RunOrchestrator:
                         # response or its terminal status.
                         pass
                 first_delta = next(
-                    (event for event in events if event.type == "answer.delta"),
+                    (
+                        event
+                        for event in events
+                        if event.type == "answer.delta"
+                        and int(event.data.get("output_revision", event.data.get("attempt", 1)))
+                        == completed.execution_revision
+                    ),
                     None,
                 )
                 span.set_attribute("ophagent.run.status", completed.status.value)
@@ -719,8 +1068,9 @@ class RunOrchestrator:
 
     async def _execute_inner(self, run_id: str) -> None:
         run = await self.store.get_run(run_id)
-        if run is None:
+        if run is None or run.status in TERMINAL:
             return
+        reschedule = False
         active_clients = self.clients
         owns_clients = False
         if self.provider_config_store and await self.provider_config_store.has_overrides(run.user_id):
@@ -757,7 +1107,8 @@ class RunOrchestrator:
         started = time.monotonic()
         try:
             run.status = RunStatus.RUNNING
-            await self.store.save_run(run)
+            if not await self.store.save_run(run):
+                return
             if conversation_context is not None:
                 conversation_context = await self._prepare_conversation_context(
                     run,
@@ -775,6 +1126,7 @@ class RunOrchestrator:
 
             while True:
                 self._check_cancel(run)
+                await self._apply_queued_interventions(run)
                 if time.monotonic() - started > run.budget.max_seconds:
                     raise BudgetExceeded("任务超过时间预算")
 
@@ -804,6 +1156,47 @@ class RunOrchestrator:
                         await self._execute_node(run, node, runner)
 
                 await asyncio.gather(*(execute_node(node) for node in ready))
+                retryable_required = [
+                    node
+                    for node in run.plan
+                    if node.required
+                    and node.status == NodeStatus.FAILED
+                    and node.attempt < _MAX_AUTOMATIC_NODE_ATTEMPTS
+                ]
+                if retryable_required:
+                    failed_node_ids = [node.id for node in retryable_required]
+                    failed_codes = [
+                        node.error_code or "node_failed"
+                        for node in retryable_required
+                    ]
+                    run.execution_revision += 1
+                    run.answer = None
+                    run.error_code = None
+                    run.error_message = None
+                    run.warnings = []
+                    for planned_node in run.plan:
+                        planned_node.status = NodeStatus.PENDING
+                        planned_node.output = None
+                        planned_node.error_code = None
+                        planned_node.started_at = None
+                        planned_node.completed_at = None
+                    started = time.monotonic()
+                    self._attempt_deadline.set(started + run.budget.max_seconds)
+                    if not await self.store.save_run(run):
+                        return
+                    await self._event(
+                        run,
+                        "agent.retrying",
+                        "必要步骤未完成，已回滚本轮执行并从计划起点重新处理",
+                        data={
+                            "failed_nodes": failed_node_ids,
+                            "issues": failed_codes,
+                            "required_corrections": [
+                                "重新执行所有依赖步骤，并落实失败节点保存的恢复反馈。"
+                            ],
+                        },
+                    )
+                    continue
 
             terminal_id = "report" if run.route and run.route.needs_report else "answer"
             terminal = next((node for node in run.plan if node.id == terminal_id), None)
@@ -822,9 +1215,20 @@ class RunOrchestrator:
                     if optional_failures or run.warnings
                     else RunStatus.COMPLETED
                 )
-                existing_events = await self.store.get_events(run.id)
-                if not any(event.type == "answer.delta" for event in existing_events):
-                    await self._emit_answer_deltas(run, run.answer)
+                publication_events = [
+                    self._make_event(
+                        run,
+                        "answer.delta",
+                        "正在生成回答",
+                        data={
+                            "delta": run.answer[offset:offset + 240],
+                            "offset": offset,
+                            "output_revision": run.execution_revision,
+                        },
+                    )
+                    for offset in range(0, len(run.answer), 240)
+                ]
+                artifacts: list[Artifact] = []
                 if terminal_id == "report":
                     artifact = Artifact(
                         run_id=run.id,
@@ -837,23 +1241,63 @@ class RunOrchestrator:
                             "plugin_id": run.plugin.id,
                             "risk_level": run.risk_level,
                             "trace_id": run.trace_id,
+                            "output_revision": run.execution_revision,
                         },
                     )
-                    await self.store.save_artifact(artifact)
-                    await self._event(
-                        run,
-                        "artifact.created",
-                        "报告产物已生成",
-                        data={"artifact": artifact.model_dump(mode="json")},
+                    artifacts.append(artifact)
+                    publication_events.append(
+                        self._make_event(
+                            run,
+                            "artifact.created",
+                            "报告产物已生成",
+                            data={
+                                "artifact": artifact.model_dump(mode="json"),
+                                "output_revision": run.execution_revision,
+                            },
+                        )
                     )
-                await self._event(
-                    run,
-                    "answer.completed",
-                    "回答生成完成",
-                    data={"answer": run.answer},
+                publication_events.append(
+                    self._make_event(
+                        run,
+                        "answer.completed",
+                        "回答生成完成",
+                        data={
+                            "answer": run.answer,
+                            "output_revision": run.execution_revision,
+                        },
+                    )
                 )
                 run.status = final_status
-                await self._event(run, "run.completed", "任务执行完成", status=run.status)
+                terminal_event = self._make_event(
+                    run,
+                    "run.completed",
+                    "任务执行完成",
+                    status=run.status,
+                )
+                committed = await self.store.commit_terminal(
+                    run,
+                    terminal_event,
+                    public_events=publication_events,
+                    artifacts=artifacts,
+                )
+                if not committed:
+                    # Nothing in publication_events or artifacts was committed,
+                    # so the obsolete attempt never becomes user-visible.
+                    refreshed = await self.store.get_run(run.id)
+                    if refreshed is None:
+                        return
+                    run = refreshed
+                    if run.status in TERMINAL:
+                        return
+                    run.answer = None
+                    run.status = RunStatus.RUNNING
+                    if not await self._apply_queued_interventions(run):
+                        return
+                    run.status = RunStatus.QUEUED
+                    if not await self.store.save_run(run):
+                        return
+                    reschedule = True
+                    return
             else:
                 run.status = RunStatus.FAILED
                 run.error_code = f"{terminal_id}_unavailable"
@@ -866,11 +1310,31 @@ class RunOrchestrator:
                     error_code=run.error_code,
                 )
         except asyncio.CancelledError:
-            run.status = RunStatus.CANCELLED
+            intervention_id = self._interruptions.get(run.id)
+            run.status = (
+                RunStatus.INTERRUPTED
+                if intervention_id
+                else RunStatus.CANCELLED
+            )
+            for node in run.plan:
+                if node.status == NodeStatus.RUNNING:
+                    node.status = NodeStatus.PENDING if intervention_id else NodeStatus.CANCELLED
+                    node.started_at = None
             events = await self.store.get_events(run.id)
-            if (
-                not any(event.type == "run.cancelled" for event in events)
-            ):
+            if intervention_id:
+                if not any(
+                    event.type == "run.interrupted"
+                    and event.data.get("attempt") == run.attempt
+                    for event in events
+                ):
+                    await self._event(
+                        run,
+                        "run.interrupted",
+                        "当前步骤已因用户新要求中断；已保留可复用检查点",
+                        status=run.status,
+                        data={"intervention_id": intervention_id},
+                    )
+            elif not any(event.type == "run.cancelled" for event in events):
                 await self._event(run, "run.cancelled", "任务已取消", status=run.status)
         except Exception as exc:
             run.status = RunStatus.FAILED
@@ -878,7 +1342,7 @@ class RunOrchestrator:
             run.error_message = str(exc)
             banner = emergency_banner(run.clinical_state)
             if banner:
-                run.answer = banner + "\n\n系统能力异常，未继续生成诊断性内容。"
+                run.answer = banner
             await self._event(
                 run,
                 "run.failed",
@@ -894,16 +1358,8 @@ class RunOrchestrator:
             self._attempt_deadline.reset(attempt_deadline_token)
             if owns_clients:
                 await active_clients.close()
-
-    async def _emit_answer_deltas(self, run: RunRecord, answer: str) -> None:
-        for offset in range(0, len(answer), 240):
-            await self._event(
-                run,
-                "answer.delta",
-                "正在生成回答",
-                data={"delta": answer[offset:offset + 240], "offset": offset},
-            )
-            await asyncio.sleep(0)
+            if reschedule:
+                self._spawn(run_id)
 
     async def _prepare_conversation_context(
         self,
@@ -1170,7 +1626,7 @@ class RunOrchestrator:
             await self._event(
                 run,
                 "tool.failed",
-                f"{node.title}不可用：{exc.detail}",
+                f"{node.title}暂时未完成，系统将从可恢复位置继续处理",
                 data={"node_id": node.id, "capability": exc.capability},
                 error_code=exc.code,
             )
@@ -1185,7 +1641,7 @@ class RunOrchestrator:
             await self._event(
                 run,
                 "tool.failed",
-                f"{node.title}失败：{str(exc)[:200]}",
+                f"{node.title}暂时未完成，系统将从可恢复位置继续处理",
                 data={"node_id": node.id},
                 error_code=node.error_code,
             )
@@ -1537,7 +1993,7 @@ class RunOrchestrator:
                 validate_citations: Callable[[str, list[EvidenceItem]], Any],
             ) -> dict[str, Any]:
                 answer = _moderate_unconfirmed_medical_language(
-                    raw_answer,
+                    _clean_public_answer(raw_answer),
                     run.risk_level,
                 )
                 banner = emergency_banner(run.clinical_state)
@@ -1646,11 +2102,7 @@ class RunOrchestrator:
             canonicalize_citations: Callable[[str, list[EvidenceItem]], str],
             validate_citations: Callable[[str, list[EvidenceItem]], Any],
         ) -> dict[str, Any]:
-            answer = (
-                _remove_knowledge_boilerplate(raw_answer)
-                if knowledge_query
-                else raw_answer
-            )
+            answer = _clean_public_answer(raw_answer)
             answer = canonicalize_citations(
                 answer,
                 evidence,
@@ -1907,11 +2359,17 @@ class RunOrchestrator:
                 f"image_{index}"
                 for index in range(1, len(run.input.image_paths) + 1)
             ]
+        recovery_context = ""
+        if node.recovery_feedback:
+            recovery_context = (
+                "\n\n本影像步骤此前未完成；本次必须避免重复以下问题："
+                f"{json.dumps(node.recovery_feedback[-2:], ensure_ascii=False)}"
+            )
         result = await self._client_context.get().analyze_image(
             ImageAnalysisRequest(
                 image_paths=run.input.image_paths,
                 image_ids=image_ids,
-                question=run.input.query,
+                question=run.input.query + recovery_context,
                 request_regions=bool(node.input.get("request_regions")),
             ),
         )
@@ -2167,8 +2625,9 @@ class RunOrchestrator:
             "可见观察、临床印象、鉴别与依据、局限、建议。"
             "上下文中的影像观察来自已上传原始影像，不得声称未提供图像或仅基于文本。"
             "若病灶定位 regions 为空，只能说明未形成经校验坐标，不得自行描述已标定边界。"
-            "每个医学主张使用对应 [ev_xxx]；没有证据就明确标为证据不足。"
-            "包含不确定性、下一步行动和研究级诊疗增强免责声明。"
+            "每个医学主张使用对应 [ev_xxx]；没有证据就只写当前资料能支持的观察。"
+            "正文只呈现与任务直接相关的结果、必要的不确定性和下一步行动；"
+            "不要输出通用免责声明、系统规则、校验过程或安全策略。"
         )
         should_stream = stream and not bool(run.route and run.route.selected_plugins)
         localization_requested = bool(
@@ -2184,7 +2643,7 @@ class RunOrchestrator:
             validate_citations: Callable[[str, list[EvidenceItem]], Any],
         ) -> dict[str, Any]:
             answer = canonicalize_citations(
-                raw_answer,
+                _clean_public_answer(raw_answer),
                 evidence,
             )
             known_citations = {item.id for item in evidence}
@@ -2208,11 +2667,6 @@ class RunOrchestrator:
             if banner:
                 answer = banner + "\n\n" + answer
             validation = validate_citations(answer, evidence)
-            if not evidence:
-                answer += (
-                    "\n\n> 本次未检索到足够的可追踪证据，"
-                    "系统没有用模型常识补造来源。"
-                )
             output_validation = _validate_answer_output(
                 answer,
                 query=run.input.query,
@@ -2407,23 +2861,59 @@ class RunOrchestrator:
         data: dict[str, Any] | None = None,
         duration_ms: int | None = None,
         error_code: str | None = None,
-    ) -> None:
-        event = RunEvent(
+    ) -> bool:
+        event = self._make_event(
+            run,
+            event_type,
+            summary,
+            status=status,
+            data=data,
+            duration_ms=duration_ms,
+            error_code=error_code,
+        )
+        if event_type in FINAL_EVENT_TYPES:
+            return await self.store.commit_terminal(run, event)
+        else:
+            await self.store.append_event(event)
+            return True
+
+    def _make_event(
+        self,
+        run: RunRecord,
+        event_type: str,
+        summary: str,
+        *,
+        status: Any | None = None,
+        data: dict[str, Any] | None = None,
+        duration_ms: int | None = None,
+        error_code: str | None = None,
+    ) -> RunEvent:
+        node_id = str((data or {}).get("node_id") or "")
+        internal = (
+            event_type in _INTERNAL_EVENT_TYPES
+            or node_id in {"draft", "critic"}
+            or (
+                event_type == "agent.completed"
+                and node_id in {"answer", "report"}
+            )
+        )
+        return RunEvent(
             run_id=run.id,
             trace_id=run.trace_id,
             type=event_type,
+            visibility="internal" if internal else "public",
             status=str(status) if status is not None else None,
             public_summary=summary,
-            data={"attempt": run.attempt, **(data or {})},
+            data={
+                "attempt": run.attempt,
+                "execution_revision": run.execution_revision,
+                **(data or {}),
+            },
             prompt_tokens=run.budget.prompt_tokens,
             completion_tokens=run.budget.completion_tokens,
             duration_ms=duration_ms,
             error_code=error_code,
         )
-        if event_type in FINAL_EVENT_TYPES:
-            await self.store.commit_terminal(run, event)
-        else:
-            await self.store.append_event(event)
 
 
 def _encoding_for_model(model_name: str):
@@ -2538,14 +3028,25 @@ def _pack_evidence(
     return packed
 
 
-def _remove_knowledge_boilerplate(answer: str) -> str:
-    """Keep medical content while removing UI-duplicated source lists and legal filler."""
+def _clean_public_answer(answer: str) -> str:
+    """Remove UI-duplicated sources, policy prose, and generic disclaimers."""
+    answer = answer.replace("研究级眼科评估", "眼科评估")
     generic_phrases = (
         "本内容仅为医学科普",
         "本内容仅供医学科普",
+        "本回答仅供参考",
+        "以上内容仅供参考",
+        "仅供参考，不能",
         "不构成个体化诊断或处方建议",
         "具体诊疗路径需由执业医师",
         "本系统用于研究级诊疗增强",
+        "人工智能可能遗漏",
+        "AI 可能",
+        "AI可能",
+        "不能替代医生诊断",
+        "不能替代专业医疗建议",
+        "无法替代专业医疗建议",
+        "请勿将本回答作为诊断",
     )
     cleaned: list[str] = []
     skipping_sources = False
@@ -2561,10 +3062,19 @@ def _remove_knowledge_boilerplate(answer: str) -> str:
                 continue
         if any(phrase in stripped for phrase in generic_phrases):
             continue
+        raw_line = raw_line.replace(
+            "相关信息只能形成待复核评估，不能确诊。",
+            "当前资料支持以下初步评估。",
+        )
+        if re.fullmatch(
+            r"#{0,6}\s*(?:免责声明|医疗边界|安全提示|研究用途声明)\s*",
+            stripped,
+        ):
+            continue
         if "医疗边界与下一步建议" in stripped:
             raw_line = raw_line.replace("医疗边界与下一步建议", "下一步建议")
         cleaned.append(raw_line)
-    return "\n".join(cleaned).strip()
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(cleaned)).strip()
 
 
 def _sanitize_public_image_context(
@@ -2601,10 +3111,7 @@ def _sanitize_public_image_context(
             "可疑区域标定",
             "解剖关注区（未形成坐标标注）",
         )
-        notice = (
-            "> **定位校验结果：** 多模态组件已读取上传影像，但没有返回通过坐标校验的"
-            "病灶区域，因此系统未在原图补画边界。下列解剖关注点不等同于已定位病灶。"
-        )
+        notice = "> **定位结果：** 本次未获得可显示的坐标定位；以下仅为影像观察。"
         if "定位校验结果" not in cleaned:
             cleaned = f"{notice}\n\n{cleaned}"
     return cleaned
@@ -2720,7 +3227,7 @@ def _validate_answer_output(
     if (
         localization_requested
         and validated_region_count == 0
-        and "定位校验结果" not in answer
+        and not any(label in answer for label in ("定位结果", "定位校验结果"))
     ):
         issues.append("missing_empty_localization_disclosure")
     issues.extend(

@@ -781,14 +781,25 @@ class ExecutionContextManager:
         soft_limit = max(256, int(limit * trigger_ratio))
         tokens_before = _token_count(json_dumps(raw), model)
         compressed = tokens_before > soft_limit
+        critical_payload, preserved_fields = _critical_context(raw)
+        critical_tokens = _token_count(json_dumps(critical_payload), model)
+        if critical_tokens > soft_limit:
+            raise BudgetExceeded(
+                "红旗、用药、过敏、未解决问题或证据定位超过上下文安全预算；"
+                "不能静默截断关键临床字段",
+            )
+        # Reserve the lossless safety/provenance channel before compacting
+        # optional dependency narration.  Compacting to the whole soft limit
+        # and overlaying critical fields afterwards can exceed the limit even
+        # when the critical fields themselves are small.
+        compactable_budget = max(32, soft_limit - critical_tokens - 32)
         prompt_payload = (
-            _compact_context_value(raw, soft_limit, model)
+            _compact_context_value(raw, compactable_budget, model)
             if compressed
             else raw
         )
         if not isinstance(prompt_payload, dict):
             prompt_payload = {}
-        critical_payload, preserved_fields = _critical_context(raw)
         prompt_payload = _merge_context(prompt_payload, critical_payload)
         tokens_after = _token_count(json_dumps(prompt_payload), model)
         if tokens_after > soft_limit:

@@ -107,7 +107,8 @@ test("真实模型完成多轮追问、上下文压缩、反馈、重生成和�
   expect(followUp.route.reason_code).toBe("contextual_follow_up");
   expect(followUp.context_stats.source_turns).toBe(1);
   expect(regenerated.context_stats.source_turns).toBe(1);
-  if (Number(process.env.CONVERSATION_CONTEXT_MAX_INPUT_TOKENS || 0) <= 350) {
+  const contextLimit = process.env.CONVERSATION_CONTEXT_MAX_INPUT_TOKENS;
+  if (contextLimit && Number(contextLimit) <= 350) {
     expect(followUp.context_stats.compaction_status).toBe("completed");
     expect(followUp.context_stats.compaction_method).toBe("model_structured_summary");
     expect(followUp.context_stats.summarized_turns).toBe(1);

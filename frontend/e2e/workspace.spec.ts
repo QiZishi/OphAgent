@@ -28,6 +28,7 @@ const run = {
   answer: "应结合**视力、眼底和 OCT**进行复核，并由眼科医生根据分期确定随访间隔。[ev_visual]",
   warnings: [],
   attempt: 1,
+  execution_revision: 1,
   budget: { model_calls: 1, prompt_tokens: 300, completion_tokens: 120, max_model_calls: 3, max_tokens: 12000 },
   created_at: "2026-07-28T06:00:00Z",
   updated_at: "2026-07-28T06:00:12Z"

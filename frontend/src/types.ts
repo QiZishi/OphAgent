@@ -72,7 +72,10 @@ export interface Run {
   pending_question?: string;
   pending_approval?: Record<string, unknown>;
   user_inputs?: string[];
+  interventions?: RunIntervention[];
+  applied_intervention_ids?: string[];
   attempt: number;
+  execution_revision: number;
   budget: {
     model_calls: number;
     prompt_tokens: number;
@@ -93,6 +96,20 @@ export interface Run {
   };
   created_at: string;
   updated_at?: string;
+}
+
+export interface RunIntervention {
+  id: string;
+  run_id: string;
+  mode: "interrupt" | "queue";
+  content?: string;
+  attachment_ids: string[];
+  expected_attempt: number;
+  client_message_id: string;
+  status: "queued" | "applied" | "cancelled";
+  created_at: string;
+  applied_at?: string;
+  cancelled_at?: string;
 }
 
 export interface Evidence {

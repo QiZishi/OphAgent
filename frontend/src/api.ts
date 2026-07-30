@@ -91,6 +91,25 @@ export const api = {
   runEvents: (id: string, afterSequence = 0) =>
     request<RunEvent[]>(`/api/v1/runs/${id}/events?after_sequence=${afterSequence}`),
   cancelRun: (id: string) => request<Run>(`/api/v1/runs/${id}/cancel`, { method: "POST" }),
+  interveneRun: (
+    id: string,
+    values: {
+      mode: "interrupt" | "queue";
+      content: string;
+      attachment_ids: string[];
+      expected_attempt: number;
+      client_message_id: string;
+    }
+  ) =>
+    request<Run>(`/api/v1/runs/${id}/interventions`, {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify(values)
+    }),
+  cancelRunIntervention: (runId: string, interventionId: string) =>
+    request<Run>(`/api/v1/runs/${runId}/interventions/${interventionId}`, {
+      method: "DELETE"
+    }),
   resumeRun: (id: string) => request<Run>(`/api/v1/runs/${id}/resume`, { method: "POST" }),
   retryRun: (id: string) => request<Run>(`/api/v1/runs/${id}/retry`, { method: "POST" }),
   feedbackRun: (id: string, value: "up" | "down" | null) =>
