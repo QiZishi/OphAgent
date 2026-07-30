@@ -39,8 +39,6 @@ export function WorkspaceViews(props: WorkspaceViewsProps) {
       <ManagementViews
         view={props.view as ManagementView}
         capabilities={props.capabilities}
-        canManageSystem={props.user.role === "admin"}
-        userId={props.user.id}
       />
     );
   }
@@ -53,7 +51,7 @@ export function WorkspaceViews(props: WorkspaceViewsProps) {
     );
   }
   if (props.view === "files") return <FilesPage onArtifact={props.onArtifact} />;
-  if (props.view === "plugins") return <PluginsPage />;
+  if (props.view === "plugins") return <PluginsPage capabilities={props.capabilities} />;
   return (
     <SettingsPage
       capabilities={props.capabilities}
@@ -239,18 +237,35 @@ function FilesPage({ onArtifact }: { onArtifact: (artifact: Artifact) => void })
   );
 }
 
-function PluginsPage() {
+function PluginsPage({ capabilities }: { capabilities: Capability[] }) {
+  const byId = new Map(capabilities.map((item) => [item.id, item]));
+  const requirements: Record<string, string[]> = {
+    lesion_localizer: ["sub_model"],
+    aux_diagnosis: ["main_model"],
+    report_generator: ["main_model"]
+  };
   return (
     <section className="management-page">
       <WorkspaceHeader kicker="按需调用" title="插件" copy="OphAgent 会自动选择能力；也可以在输入框中用 @ 明确指定一个或多个插件。" />
       <div className="plugin-directory">
-        {PLUGINS.map(({ id, label, description, icon: Icon }) => (
-          <article key={id}>
-            <span><Icon size={20} /></span>
-            <div><h2>{label}</h2><p>{description}</p><code>@{label}</code></div>
-            <strong>可用</strong>
-          </article>
-        ))}
+        {PLUGINS.map(({ id, label, description, icon: Icon }) => {
+          const dependencies = requirements[id].map((key) => byId.get(key));
+          const status = dependencies.some((item) => !item || item.status === "unavailable")
+            ? "unavailable"
+            : dependencies.every((item) => item?.status === "ready")
+              ? "ready"
+              : "degraded";
+          return (
+            <article key={id}>
+              <span><Icon size={20} /></span>
+              <div>
+                <h2>{label}</h2><p>{description}</p><code>@{label}</code>
+                {status !== "ready" && <small>{dependencies.map((item) => item?.detail).filter(Boolean).join("；") || "依赖能力状态未知"}</small>}
+              </div>
+              <strong>{status === "ready" ? "可用" : status === "degraded" ? "待验证" : "不可用"}</strong>
+            </article>
+          );
+        })}
       </div>
     </section>
   );
@@ -413,8 +428,6 @@ function SettingsPage({
       <ManagementViews
         view="capabilities"
         capabilities={capabilities}
-        canManageSystem={false}
-        userId={0}
       />
     </section>
   );

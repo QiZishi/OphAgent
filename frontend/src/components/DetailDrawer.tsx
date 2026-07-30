@@ -1,5 +1,5 @@
 import { Check, Download, FileDown, FileText, PencilLine, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { Artifact } from "../types";
 import { LoadingDots } from "./LoadingDots";
@@ -20,16 +20,13 @@ export function DetailDrawer({
   onSave: (id: string, values: { title?: string; content?: string }) => Promise<Artifact>;
 }) {
   const drawerRef = useRef<HTMLElement>(null);
-  const onCloseRef = useRef(onClose);
   const dirty = useRef(false);
+  const revision = useRef(0);
+  const closeDrawerRef = useRef<() => Promise<void>>(async () => undefined);
   const [width, setWidth] = useState(() => Number(localStorage.getItem("ophagent.drawer.width")) || DEFAULT_DRAWER_WIDTH);
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [saveState, setSaveState] = useState<"saved" | "saving" | "error">("saved");
-
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
 
   useEffect(() => {
     localStorage.setItem("ophagent.drawer.width", String(Math.round(width)));
@@ -40,23 +37,48 @@ export function DetailDrawer({
     setContent(artifact?.content || "");
     setSaveState("saved");
     dirty.current = false;
+    revision.current = 0;
   }, [artifact?.id, artifact?.content, artifact?.title]);
 
   useEffect(() => {
     if (!open || !artifact || !dirty.current) return;
     setSaveState("saving");
+    const savedRevision = revision.current;
     const timer = window.setTimeout(async () => {
       try {
         const updated = await onSave(artifact.id, { title, content });
+        if (revision.current !== savedRevision) return;
         dirty.current = false;
         setSaveState("saved");
         onChange(updated);
       } catch {
-        setSaveState("error");
+        if (revision.current === savedRevision) setSaveState("error");
       }
     }, 700);
     return () => window.clearTimeout(timer);
   }, [artifact, content, onChange, onSave, open, title]);
+
+  const closeDrawer = useCallback(async () => {
+    if (artifact && dirty.current) {
+      const savedRevision = revision.current;
+      try {
+        setSaveState("saving");
+        const updated = await onSave(artifact.id, { title, content });
+        if (revision.current !== savedRevision) return;
+        dirty.current = false;
+        setSaveState("saved");
+        onChange(updated);
+      } catch {
+        if (revision.current === savedRevision) setSaveState("error");
+        return;
+      }
+    }
+    onClose();
+  }, [artifact, content, onChange, onClose, onSave, title]);
+
+  useEffect(() => {
+    closeDrawerRef.current = closeDrawer;
+  }, [closeDrawer]);
 
   useEffect(() => {
     if (!open) return;
@@ -69,7 +91,7 @@ export function DetailDrawer({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCloseRef.current();
+        void closeDrawerRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -106,22 +128,6 @@ export function DetailDrawer({
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", end);
-  }
-
-  async function closeDrawer() {
-    if (artifact && dirty.current) {
-      try {
-        setSaveState("saving");
-        const updated = await onSave(artifact.id, { title, content });
-        dirty.current = false;
-        setSaveState("saved");
-        onChange(updated);
-      } catch {
-        setSaveState("error");
-        return;
-      }
-    }
-    onClose();
   }
 
   if (!open || !artifact) return null;
@@ -168,6 +174,7 @@ export function DetailDrawer({
               value={title}
               onChange={(event) => {
                 dirty.current = true;
+                revision.current += 1;
                 setTitle(event.target.value);
               }}
               aria-label="文档标题"
@@ -199,6 +206,7 @@ export function DetailDrawer({
                 value={content}
                 onChange={(event) => {
                   dirty.current = true;
+                  revision.current += 1;
                   setContent(event.target.value);
                 }}
                 aria-label="编辑文档内容"

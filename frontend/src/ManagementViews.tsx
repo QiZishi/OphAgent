@@ -43,6 +43,8 @@ function MemoriesPage() {
   const [editing, setEditing] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [newCategory, setNewCategory] = useState<MemoryRecord["category"]>("preference");
+  const [newContent, setNewContent] = useState("");
   const load = useCallback(async () => {
     const [items, preference] = await Promise.all([api.memories(), api.memoryPreference()]);
     setRecords(items);
@@ -64,7 +66,34 @@ function MemoriesPage() {
 
   return (
     <>
-      <PageHeader eyebrow="LONG-TERM MEMORY" title="长期记忆" copy="只使用已确认记录；候选、冲突、来源和敏感级别始终可见。" />
+      <PageHeader eyebrow="可管理的长期上下文" title="长期记忆" copy="只使用已确认记录；候选、冲突、来源和敏感级别始终可见。" />
+      <form className="memory-create" onSubmit={async (event) => {
+        event.preventDefault();
+        const content = newContent.trim();
+        if (!content) return;
+        setBusy("create");
+        setError("");
+        try {
+          const created = await api.createMemory(newCategory, content);
+          setRecords((current) => [created, ...current]);
+          setNewContent("");
+        } catch (reason) {
+          setError(reason instanceof Error ? reason.message : "新增记忆失败");
+        } finally {
+          setBusy("");
+        }
+      }}>
+        <select aria-label="记忆类别" value={newCategory} onChange={(event) => setNewCategory(event.target.value as MemoryRecord["category"])}>
+          <option value="preference">表达偏好</option>
+          <option value="workspace">工作区习惯</option>
+          <option value="history">病史</option>
+          <option value="medication">用药</option>
+          <option value="allergy">过敏</option>
+          <option value="follow_up">随访</option>
+        </select>
+        <textarea aria-label="新增记忆内容" value={newContent} onChange={(event) => setNewContent(event.target.value)} placeholder="输入希望系统记住的内容；医疗记录创建后仍需确认。" />
+        <button disabled={busy === "create" || !newContent.trim()}><Sparkles size={14} />新增候选记忆</button>
+      </form>
       <div className="management-toolbar">
         <button className={`toggle-control ${enabled ? "on" : ""}`} onClick={async () => {
           const result = await api.setMemoryPreference(!enabled); setEnabled(result.enabled);
@@ -105,41 +134,68 @@ function MemoriesPage() {
   );
 }
 
-function SkillsPage({ canManageSystem }: { canManageSystem: boolean }) {
+function SkillsPage() {
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [markdown, setMarkdown] = useState("");
   const [error, setError] = useState("");
   const load = useCallback(() => api.skills().then(setSkills), []);
+  const forceEnable = useCallback(async (skill: SkillRecord) => {
+    const risks = skill.evaluation.risks?.map((item) => `• ${item.message}`) || [];
+    if (skill.evaluation.offline_review_required) {
+      risks.push("• 涉及高风险能力、外部依赖或工具调用");
+    }
+    const acknowledgement = [
+      `Skill：${skill.id}`,
+      "系统检测到以下风险：",
+      ...(risks.length ? risks : ["• 校验结果要求显式审批"]),
+      "",
+      "强制加载不会改变系统安全规则。是否确认由你审批加载？"
+    ].join("\n");
+    if (!window.confirm(acknowledgement)) return;
+    try {
+      await api.updateSkill(skill.id, "enabled", {
+        force: true,
+        risk_acknowledgement: acknowledgement
+      });
+      setError("");
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "强制加载失败");
+    }
+  }, [load]);
   useEffect(() => { load().catch((reason) => setError(String(reason))); }, [load]);
   return (
     <>
-      <PageHeader eyebrow="CONTROLLED SKILLS" title="Skill 注册表" copy="候选 Skill 先隔离，再校验结构、依赖、安全规则和内容 checksum。" />
+      <PageHeader eyebrow="能力管理" title="Skill 注册表" copy="内置 Skill 默认可用；新导入 Skill 先隔离并显示安全风险，最终加载决定由用户审批。" />
       {error && <p className="management-error">{error}</p>}
-      {canManageSystem ? (
-        <details className="import-panel">
-          <summary><Sparkles size={15} />导入候选 SKILL.md</summary>
-          <textarea value={markdown} onChange={(event) => setMarkdown(event.target.value)} placeholder="粘贴含 frontmatter 的完整 SKILL.md" />
-          <button onClick={async () => {
-            try { await api.importSkill(markdown); setMarkdown(""); await load(); }
-            catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败"); }
-          }}>进入候选隔离区</button>
-        </details>
-      ) : (
-        <p className="provenance">系统级 Skill 由管理员维护；你可以查看当前可用能力，并在对话中选择已启用 Skill。</p>
-      )}
+      <details className="import-panel">
+        <summary><Sparkles size={15} />导入候选 SKILL.md</summary>
+        <textarea value={markdown} onChange={(event) => setMarkdown(event.target.value)} placeholder="粘贴含 frontmatter 的完整 SKILL.md" />
+        <button onClick={async () => {
+          try { await api.importSkill(markdown); setMarkdown(""); await load(); }
+          catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败"); }
+        }}>进入候选隔离区</button>
+      </details>
       <div className="management-grid">
         {skills.map((skill) => (
           <article className="management-card" key={skill.id}>
             <header><span className={`state-pill ${skill.status}`}>{skill.status}</span><b>{skill.id}</b><small>v{skill.version}</small></header>
             <p>{skill.description}</p>
             <div className="provenance">风险：{skill.risk_level} · 依赖：{skill.dependencies.length || "无"}</div>
-            {Boolean(skill.evaluation.passed) && <div className="pass-note"><ShieldCheck size={14} />当前内容已通过门禁</div>}
-            {canManageSystem && <footer>
-              {skill.status === "candidate" && <button onClick={async () => { await api.validateSkill(skill.id); await load(); }}><Gauge size={14} />执行评测</button>}
-              {skill.status === "validated" && <button onClick={async () => { await api.updateSkill(skill.id, "enabled"); await load(); }}><Check size={14} />启用</button>}
+            {Boolean(skill.evaluation.passed) && <div className="pass-note"><ShieldCheck size={14} />当前内容已通过静态校验</div>}
+            {skill.evaluation.risks?.map((risk) => (
+              <div className="management-error" key={risk.code}><AlertTriangle size={14} />{risk.message}</div>
+            ))}
+            {skill.evaluation.user_approval && <div className="pass-note"><ShieldCheck size={14} />用户已确认风险并批准当前版本</div>}
+            <footer>
+              {skill.status === "candidate" && <button onClick={async () => { await api.validateSkill(skill.id); await load(); }}><Gauge size={14} />执行静态校验</button>}
+              {skill.status === "validated" && !skill.evaluation.offline_review_required && <button onClick={async () => { await api.updateSkill(skill.id, "enabled"); await load(); }}><Check size={14} />启用</button>}
+              {(skill.status === "validated" || skill.status === "rejected") && (skill.evaluation.offline_review_required || !skill.evaluation.passed) && (
+                <button onClick={() => forceEnable(skill)}><AlertTriangle size={14} />了解风险并强制加载</button>
+              )}
               {skill.status === "enabled" && <button onClick={async () => { await api.updateSkill(skill.id, "disabled"); await load(); }}>停用</button>}
               {skill.status === "disabled" && <button onClick={async () => { await api.updateSkill(skill.id, "enabled"); await load(); }}>重新启用</button>}
-            </footer>}
+            </footer>
           </article>
         ))}
       </div>
@@ -147,13 +203,7 @@ function SkillsPage({ canManageSystem }: { canManageSystem: boolean }) {
   );
 }
 
-function KnowledgePage({
-  canManageSystem,
-  userId
-}: {
-  canManageSystem: boolean;
-  userId: number;
-}) {
+function KnowledgePage() {
   const [status, setStatus] = useState<KnowledgeStatus | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [error, setError] = useState("");
@@ -164,7 +214,7 @@ function KnowledgePage({
   useEffect(() => { load().catch((reason) => setError(String(reason))); }, [load]);
   return (
     <>
-      <PageHeader eyebrow="GUIDELINE GOVERNANCE" title="知识库与来源" copy="段落、页图、版本和失效状态共同进入检索；用户上传不会自动晋升为正式指南。" />
+      <PageHeader eyebrow="来源治理" title="知识库与来源" copy="段落、页图、版本和失效状态共同进入检索；用户上传不会自动晋升为正式指南。" />
       {status && <div className="metric-strip">
         <span><b>{status.documents}</b>来源</span><span><b>{status.chunks}</b>片段</span>
         <span><b>{status.vectors}</b>向量</span><span><b>{status.page_visuals}</b>页图</span>
@@ -174,7 +224,7 @@ function KnowledgePage({
         <label className="file-action"><FileUp size={15} />导入 md / txt / pdf<input hidden type="file" accept=".md,.txt,.pdf" onChange={async (event) => {
           const file = event.target.files?.[0]; if (file) { await api.importKnowledge(file); await load(); }
         }} /></label>
-        {canManageSystem && <button onClick={async () => { await api.rebuildKnowledge(true); await load(); }} disabled={status?.status === "building"}>{status?.status === "building" ? <LoadingDots label="重建知识索引" /> : <RefreshCw size={15} />}重建向量索引</button>}
+        <button onClick={async () => { await api.rebuildKnowledge(true); await load(); }} disabled={status?.status === "building"}>{status?.status === "building" ? <LoadingDots label="重建知识索引" /> : <RefreshCw size={15} />}重建向量索引</button>
       </div>
       {error && <p className="management-error">{error}</p>}
       <div className="source-table">
@@ -183,12 +233,10 @@ function KnowledgePage({
           <div className="source-row" key={source.id}>
             <span><b>{source.title}</b><small>{source.source_type} · {source.verified ? "已登记" : "待核验"}</small></span>
             <span>{source.institution || "机构待核验"}<small>{source.version || source.published_at || "版本未知"}</small></span>
-            {(canManageSystem || source.imported_by === userId) ? (
-              <select value={source.status} onChange={async (event) => {
-                const next = await api.updateKnowledgeSource(source.id, { status: event.target.value as KnowledgeSource["status"] });
-                setSources((current) => current.map((item) => item.id === source.id ? next : item));
-              }}><option value="unknown">未知</option><option value="current">有效</option><option value="expired">失效</option><option value="superseded">已替代</option></select>
-            ) : <span>{source.status}</span>}
+            <select value={source.status} onChange={async (event) => {
+              const next = await api.updateKnowledgeSource(source.id, { status: event.target.value as KnowledgeSource["status"] });
+              setSources((current) => current.map((item) => item.id === source.id ? next : item));
+            }}><option value="unknown">未知</option><option value="current">有效</option><option value="expired">失效</option><option value="superseded">已替代</option></select>
           </div>
         ))}
       </div>
@@ -201,7 +249,7 @@ function CapabilitiesPage({ initial }: { initial: Capability[] }) {
   useEffect(() => { api.capabilities().then(setItems); }, []);
   return (
     <>
-      <PageHeader eyebrow="REAL CAPABILITIES" title="能力健康状态" copy="这里只报告真实配置和连接状态；unavailable 不会回退到预设医学答案。" />
+      <PageHeader eyebrow="真实能力状态" title="能力健康状态" copy="这里只报告真实配置和连接状态；unavailable 不会回退到预设医学答案。" />
       <div className="management-grid capability-grid">
         {items.map((item) => (
           <article className="capability-card" key={item.id}>
@@ -218,20 +266,16 @@ function CapabilitiesPage({ initial }: { initial: Capability[] }) {
 
 export function ManagementViews({
   view,
-  capabilities,
-  canManageSystem,
-  userId
+  capabilities
 }: {
   view: ManagementView;
   capabilities: Capability[];
-  canManageSystem: boolean;
-  userId: number;
 }) {
   return (
     <section className="management-page">
       {view === "memories" && <MemoriesPage />}
-      {view === "skills" && <SkillsPage canManageSystem={canManageSystem} />}
-      {view === "knowledge" && <KnowledgePage canManageSystem={canManageSystem} userId={userId} />}
+      {view === "skills" && <SkillsPage />}
+      {view === "knowledge" && <KnowledgePage />}
       {view === "capabilities" && <CapabilitiesPage initial={capabilities} />}
     </section>
   );

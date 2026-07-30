@@ -8,6 +8,7 @@ import os
 import re
 import tempfile
 import threading
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,6 +18,15 @@ from app.services.state import PersistentStateError
 
 YEAR_PATTERN = re.compile(r"(?:19|20)\d{2}")
 LOW_TRUST_PREFIXES = ("baidubaike_", "xywy_", "dxy_")
+GUIDELINE_MARKERS = (
+    "指南",
+    "专家共识",
+    "诊疗规范",
+    "操作规范",
+    "preferred practice pattern",
+    "clinical practice guideline",
+    " ppp",
+)
 _REGISTRY_LOCKS: dict[str, threading.RLock] = {}
 _REGISTRY_LOCKS_GUARD = threading.Lock()
 
@@ -70,11 +80,13 @@ def _infer_metadata(path: Path, config: Settings) -> KnowledgeSource:
     institution: str | None = None
     region: str | None = None
     lowered = title.lower()
-    source_type = "guideline"
-    verified = True
+    source_type = (
+        "guideline"
+        if any(marker in lowered for marker in GUIDELINE_MARKERS)
+        else "record"
+    )
     if lowered.startswith(LOW_TRUST_PREFIXES):
         source_type = "record"
-        verified = False
     if "美国眼科学会" in title or "aao" in lowered:
         institution, region = "美国眼科学会", "美国"
     elif any(marker in title for marker in ("中国", "中华", "国家", "我国")):
@@ -89,7 +101,10 @@ def _infer_metadata(path: Path, config: Settings) -> KnowledgeSource:
         published_at=year.group(0) if year else None,
         version=year.group(0) if year else None,
         status="unknown",
-        verified=verified,
+        # Files shipped in the built-in corpus are trusted by the product
+        # baseline. User imports take the separate register_upload path and
+        # always start private and unverified.
+        verified=True,
         checksum=file_checksum(path),
     )
 
@@ -176,7 +191,13 @@ class SourceRegistry:
         with self._lock:
             _atomic_json(self.path, [record.model_dump(mode="json") for record in records])
 
-    def update(self, source_id: str, values: dict[str, object]) -> KnowledgeSource:
+    def update(
+        self,
+        source_id: str,
+        values: dict[str, object],
+        *,
+        verified_by: int | None = None,
+    ) -> KnowledgeSource:
         with self._lock:
             records = self._list_unlocked()
             allowed = {
@@ -189,13 +210,35 @@ class SourceRegistry:
                 "status",
                 "superseded_by",
                 "verified",
+                "verification_note",
             }
             for index, record in enumerate(records):
                 if record.id != source_id:
                     continue
-                updated = record.model_copy(
-                    update={key: value for key, value in values.items() if key in allowed},
-                )
+                changes = {
+                    key: value for key, value in values.items() if key in allowed
+                }
+                prospective = record.model_copy(update=changes)
+                if changes.get("verified") is True:
+                    if verified_by is None:
+                        raise ValueError("核验知识来源必须记录审核者")
+                    if not prospective.institution or not (
+                        prospective.version or prospective.published_at
+                    ):
+                        raise ValueError("核验前必须补充机构以及版本或发布日期")
+                    note = str(prospective.verification_note or "").strip()
+                    if not note:
+                        raise ValueError("核验前必须填写核验依据")
+                    changes.update(
+                        {
+                            "verified_by": verified_by,
+                            "verified_at": datetime.now(UTC),
+                            "verification_note": note,
+                        },
+                    )
+                elif changes.get("verified") is False:
+                    changes.update({"verified_by": None, "verified_at": None})
+                updated = record.model_copy(update=changes)
                 records[index] = KnowledgeSource.model_validate(updated)
                 self.save(records)
                 return records[index]

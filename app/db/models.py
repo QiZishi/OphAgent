@@ -12,7 +12,10 @@ class User(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     username: str = Field(unique=True, index=True, max_length=50)
     hashed_password: str
-    role: str = Field(default="patient", max_length=20)
+    # The research prototype has one unrestricted product account type.
+    # ``role`` is retained only for backward-compatible API payloads and is
+    # never used as an authorization gate.
+    role: str = Field(default="user", max_length=20)
     created_at: datetime = Field(default_factory=beijing_now, nullable=False)
     conversations: list["Conversation"] = Relationship(back_populates="user")
 

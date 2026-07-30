@@ -42,6 +42,7 @@ const run: Run = {
       status: "completed",
       output: {
         regions: [{
+          image_id: attachment.id,
           label: "视盘附近可疑区域",
           x: 0.3,
           y: 0.2,

@@ -23,3 +23,27 @@ sealed-test 必须位于仓库与候选 worktree 之外，并提供 `manifest.js
 本机可用 `scripts/install_official_evolution.sh` 从 `medical_agent_hust/evolution/upstream` 的固定官方源码安装；未安装时状态为 `unavailable`，不会启用同名简化优化器。可选依赖见 `requirements-evolution.txt`。
 
 双轨边界以 `tracks.py`、不可变策略清单和回归测试为准；本地研究文档不进入 Git 仓库。
+
+## 其他 Agent 系统如何检查双轨隔离
+
+先为 Memory、Skill、Prompt、Tool、Router、Safety、Knowledge 和 Orchestrator 分别写出四项契约：组件定义、核心作用、允许在线变化的数据、禁止在线变化的机制。若只按文件路径分轨，却没有组件契约，仍可能让“可变策略代码”绕过不可变规则。
+
+检查时至少确认：
+
+1. 在线写入口是否只接受有 schema、来源、版本和所有者的低权限数据，而不能写 system prompt、安全规则、业务红线、工具权限或执行代码。
+2. Memory 是否支持正常 CRUD、纠正、冲突和删除，同时永远不能提升为系统指令；禁止把 Memory 变成只读，否则组件也会失去核心作用。
+3. 内置 Knowledge 与 Skill 是否默认可信可用；用户新导入内容才执行风险扫描。发现风险时向用户说明并允许显式强制加载，但运行时不可变安全边界仍拥有更高优先级。
+4. 候选是否按 `mutable / immutable / mixed` 分类；`mixed` 不能拆掉不可变部分后偷偷上线，必须整体进入离线隔离评测。
+5. 不可变候选是否绑定 sealed cases、候选 commit、评测器版本和可信人工审批；候选进程不能访问签名密钥，也不能自己提交分数。
+6. 发布是否具有原子激活、审计和回滚路径；“创建 Git ref”不能冒充已经完成运行时发布。
+7. 是否有负向测试证明 Memory/Skill 内容无法改写红旗、引用真实性、业务规则、认证、权限和工具边界。
+
+本项目的检查入口：
+
+```bash
+python -m pytest tests/test_dual_track_governance.py \
+  tests/test_online_memory_and_skill_evolution.py \
+  tests/test_evolution.py
+```
+
+实现双轨时应先把核心契约放入独立、默认拒绝在线修改的 manifest，再让所有在线写入口统一调用同一个分类器和策略门。可变轨只存储记录、声明式偏好、有界权重和经验证的低风险状态；Python/TypeScript 等可执行代码、系统提示、安全/业务规则、Tool 权限与发布控制面一律进入不可变轨。任何组件优化都必须同时验证“性能变好”和“核心定义没有被改废”。

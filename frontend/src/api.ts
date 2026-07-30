@@ -135,12 +135,13 @@ export const api = {
     body.append("file", file);
     return request<VoiceTranscription>("/api/v1/audio/transcriptions", { method: "POST", body });
   },
-  synthesizeSpeech: async (text: string, voice?: string) => {
+  synthesizeSpeech: async (text: string, voice?: string, signal?: AbortSignal) => {
     const response = await fetch("/api/v1/audio/speech", {
       method: "POST",
       credentials: "include",
       headers: jsonHeaders,
-      body: JSON.stringify({ text, voice })
+      body: JSON.stringify({ text, voice }),
+      signal
     });
     if (!response.ok) {
       const payload = await response.json().catch(() => ({ detail: response.statusText }));
@@ -164,6 +165,19 @@ export const api = {
     }),
   deleteProject: (id: number) => request<void>(`/api/v1/projects/${id}`, { method: "DELETE" }),
   memories: () => request<MemoryRecord[]>("/api/v1/memories"),
+  createMemory: (
+    category: MemoryRecord["category"],
+    content: string
+  ) =>
+    request<MemoryRecord>("/api/v1/memories", {
+      method: "POST",
+      headers: jsonHeaders,
+      body: JSON.stringify({
+        category,
+        content,
+        source: "用户在记忆工作区中明确创建"
+      })
+    }),
   memoryPreference: () => request<{ enabled: boolean }>("/api/v1/memories/preference"),
   setMemoryPreference: (enabled: boolean) =>
     request<{ enabled: boolean }>("/api/v1/memories/preference", {
@@ -202,11 +216,15 @@ export const api = {
       body: JSON.stringify({ markdown })
     }),
   validateSkill: (id: string) => request<SkillRecord>(`/api/v1/skills/${id}/validate`, { method: "POST" }),
-  updateSkill: (id: string, status: "enabled" | "disabled" | "rejected") =>
+  updateSkill: (
+    id: string,
+    status: "enabled" | "disabled" | "rejected",
+    options?: { force?: boolean; risk_acknowledgement?: string }
+  ) =>
     request<SkillRecord>(`/api/v1/skills/${id}`, {
       method: "PATCH",
       headers: jsonHeaders,
-      body: JSON.stringify({ status })
+      body: JSON.stringify({ status, ...options })
     }),
   knowledgeStatus: () => request<KnowledgeStatus>("/api/v1/knowledge/status"),
   knowledgeSources: () => request<KnowledgeSource[]>("/api/v1/knowledge/sources"),

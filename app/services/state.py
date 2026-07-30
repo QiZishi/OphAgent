@@ -23,6 +23,7 @@ from app.domain.models import (
     SkillRecord,
     utc_now,
 )
+from app.services.memory_evolution import is_runtime_memory_content_allowed
 from app.services.skill_policy import (
     SAFETY_CRITICAL_SKILLS,
     requires_offline_skill_review,
@@ -126,6 +127,8 @@ class MemoryStore:
         )
 
     async def create(self, record: MemoryRecord) -> MemoryRecord:
+        if not is_runtime_memory_content_allowed(record.content):
+            raise ValueError("Memory 只能记录用户事实和偏好，不能修改系统或业务规则")
         normalized = _normalize(record.content)
         fingerprint = hashlib.sha256(
             f"{record.user_id}:{record.category}:{normalized}".encode(),
@@ -186,6 +189,8 @@ class MemoryStore:
         """Create or update explicit low-authority preference/workspace memory."""
         if category not in {"preference", "workspace"}:
             raise ValueError("在线 Memory CRUD 只允许偏好和工作区记忆")
+        if not is_runtime_memory_content_allowed(content):
+            raise ValueError("Memory 只能记录用户事实和偏好，不能修改系统或业务规则")
         normalized = _normalize(content)
         if not normalized:
             raise ValueError("Memory 内容不能为空")
@@ -355,6 +360,12 @@ class MemoryStore:
                         }
                     }
                     if "content" in allowed:
+                        if not is_runtime_memory_content_allowed(
+                            str(allowed["content"]),
+                        ):
+                            raise ValueError(
+                                "Memory 只能记录用户事实和偏好，不能修改系统或业务规则",
+                            )
                         normalized = _normalize(str(allowed["content"]))
                         allowed["fingerprint"] = hashlib.sha256(
                             f"{user_id}:{record.category}:{normalized}".encode(),
@@ -685,6 +696,21 @@ class SkillStore:
             "passed": all(checks.values()),
             "offline_review_required": self._requires_offline_review(skill),
             "checks": checks,
+            "risks": [
+                {
+                    "code": key,
+                    "message": {
+                        "description_present": "缺少用途说明",
+                        "content_heading_present": "缺少可识别的正文标题",
+                        "dependencies_available": "声明的依赖当前不可用",
+                        "no_unsafe_instruction": "检测到可能绕过诊断、引用、红旗或坐标安全规则的指令",
+                        "evidence_or_uncertainty_contract": "未声明证据或不确定性约束",
+                        "high_risk_escalation": "高风险能力未声明急诊、转诊或线下复核路径",
+                    }.get(key, f"安全检查未通过：{key}"),
+                }
+                for key, passed in checks.items()
+                if not passed
+            ],
             "dependency_checks": dependency_checks,
             "scope": "结构、依赖与医疗安全静态回归；不等同于完整病例效果评测",
         }
@@ -723,7 +749,15 @@ class SkillStore:
             atomic_json(self.evaluation_dir / f"{skill_id}.json", report)
         return await self.list_by_id(skill_id)
 
-    async def set_status(self, skill_id: str, status: str) -> SkillRecord:
+    async def set_status(
+        self,
+        skill_id: str,
+        status: str,
+        *,
+        force: bool = False,
+        approved_by: str | None = None,
+        acknowledgement: str | None = None,
+    ) -> SkillRecord:
         if status not in {"enabled", "disabled", "rejected"}:
             raise ValueError("validated 状态只能由评测接口写入")
         if skill_id in SAFETY_CRITICAL_SKILLS and status != "enabled":
@@ -735,19 +769,56 @@ class SkillStore:
             path = self.config.resolve_path(skill.path) / "SKILL.md"
             checksum = hashlib.sha256(path.read_bytes()).hexdigest()
             if is_candidate and (
-                skill.status != "validated"
-                or not report.get("passed")
+                not report
                 or report.get("checksum") != checksum
             ):
                 raise ValueError("候选 skill 必须通过与当前内容匹配的评测")
-            if is_candidate and self._requires_offline_review(skill):
-                approval = report.get("offline_approval")
-                if (
-                    not isinstance(approval, dict)
-                    or approval.get("checksum") != checksum
-                    or not approval.get("reviewer")
-                ):
-                    raise ValueError("危险 Skill 必须经过绑定当前内容的离线人工审核")
+            offline_approval = report.get("offline_approval")
+            has_matching_offline_approval = (
+                isinstance(offline_approval, dict)
+                and offline_approval.get("checksum") == checksum
+                and bool(offline_approval.get("reviewer"))
+            )
+            user_approval = report.get("user_approval")
+            has_matching_user_approval = (
+                isinstance(user_approval, dict)
+                and user_approval.get("checksum") == checksum
+                and bool(user_approval.get("reviewer"))
+                and bool(user_approval.get("acknowledgement"))
+            )
+            needs_risk_approval = is_candidate and (
+                not has_matching_user_approval
+                and (
+                    not report.get("passed")
+                    or (
+                        self._requires_offline_review(skill)
+                        and not has_matching_offline_approval
+                    )
+                )
+            )
+            if needs_risk_approval and not force:
+                risks = [
+                    str(item.get("message"))
+                    for item in report.get("risks", [])
+                    if isinstance(item, dict) and item.get("message")
+                ]
+                if self._requires_offline_review(skill):
+                    risks.append("该 Skill 涉及高风险能力、外部依赖或工具调用")
+                detail = "；".join(dict.fromkeys(risks)) or "检测到需要用户审批的风险"
+                raise ValueError(f"{detail}。确认风险后可强制加载")
+            if needs_risk_approval and force:
+                reviewer = str(approved_by or "").strip()
+                note = str(acknowledgement or "").strip()
+                if not reviewer or not note:
+                    raise ValueError("强制加载必须记录审批用户和风险确认说明")
+                report["user_approval"] = {
+                    "reviewer": reviewer,
+                    "checksum": checksum,
+                    "acknowledgement": note,
+                    "known_risks": report.get("risks", []),
+                    "approved_at": datetime.now(UTC).isoformat(),
+                }
+                atomic_json(self.evaluation_dir / f"{skill_id}.json", report)
         async with self._lock:
             states = self._states()
             previous = states.get(skill_id, {})

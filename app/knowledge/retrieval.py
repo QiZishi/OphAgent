@@ -584,7 +584,7 @@ class HybridKnowledgeRetriever:
             source_type=(
                 "record"
                 if low_trust
-                else source.source_type if source else "guideline"
+                else source.source_type if source else "record"
             ),
             verified=(source.verified if source else False) and not low_trust,
         )

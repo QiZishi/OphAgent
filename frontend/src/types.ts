@@ -16,7 +16,7 @@ export type RunStatus =
 export interface UserProfile {
   id: number;
   username: string;
-  role: "patient" | "clinician" | "admin";
+  role: "user";
 }
 
 export interface PlanNode {
@@ -87,6 +87,9 @@ export interface Run {
     tokens_before: number;
     tokens_after: number;
     cache_hit: boolean;
+    compaction_status: "not_needed" | "pending" | "completed" | "failed";
+    compaction_method: "none" | "model_structured_summary";
+    compaction_attempts: number;
   };
   created_at: string;
   updated_at?: string;
@@ -101,7 +104,11 @@ export interface Evidence {
   published_at?: string;
   institution?: string;
   version?: string;
+  region?: string;
+  population?: string;
   source_status: "current" | "expired" | "superseded" | "unknown";
+  superseded_by?: string;
+  verified?: boolean;
   visual_path?: string;
   source_type: "guideline" | "record" | "web" | "knowledge_graph" | "user";
   score: number;
@@ -239,7 +246,18 @@ export interface SkillRecord {
   risk_level: "routine" | "complex" | "high" | "emergency";
   plugins: string[];
   status: "candidate" | "validated" | "enabled" | "disabled" | "rejected";
-  evaluation: Record<string, unknown>;
+  evaluation: {
+    passed?: boolean;
+    offline_review_required?: boolean;
+    risks?: Array<{ code: string; message: string }>;
+    user_approval?: {
+      reviewer: string;
+      checksum: string;
+      acknowledgement: string;
+      approved_at: string;
+    };
+    [key: string]: unknown;
+  };
 }
 
 export interface EvolutionCandidate {

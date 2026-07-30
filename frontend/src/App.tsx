@@ -111,6 +111,7 @@ export default function App() {
   const reconnectRef = useRef<number | null>(null);
   const cursorRef = useRef<Record<string, number>>({});
   const activeIdRef = useRef<number | null>(null);
+  const openConversationEpoch = useRef(0);
 
   const loadConversations = useCallback(async () => {
     const page = await api.conversations();
@@ -148,16 +149,8 @@ export default function App() {
     localStorage.setItem("ophagent.sidebar.width", String(sidebarWidth));
   }, [sidebarWidth]);
 
-  useEffect(() => {
-    if (!drawerOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDrawerOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [drawerOpen]);
-
   async function openConversation(id: number) {
+    const requestEpoch = ++openConversationEpoch.current;
     sourceRef.current?.close();
     if (reconnectRef.current) window.clearTimeout(reconnectRef.current);
     activeIdRef.current = id;
@@ -167,6 +160,7 @@ export default function App() {
     setMobileNav(false);
     setWorkspaceView("chat");
     const detail = await api.conversation(id);
+    if (requestEpoch !== openConversationEpoch.current || activeIdRef.current !== id) return;
     setActive(detail);
     setConversations((current) => current.map((item) => item.id === id ? { ...item, ...detail } : item));
     const runs = detail.runs || [];
@@ -175,6 +169,7 @@ export default function App() {
       events: await api.runEvents(run.id),
       artifacts: await api.artifacts(run.id)
     })));
+    if (requestEpoch !== openConversationEpoch.current || activeIdRef.current !== id) return;
     const nextEvents: Record<string, RunEvent[]> = {};
     const nextArtifacts: Record<string, Artifact[]> = {};
     histories.forEach(({ run, events, artifacts }) => {
@@ -310,7 +305,7 @@ export default function App() {
 
   async function send(textOverride?: string) {
     const text = (textOverride ?? draft).trim();
-    if (!text || submitting) return;
+    if ((!text && !attachments.length) || submitting) return;
     setSubmitting(true);
     setError("");
     try {
@@ -363,18 +358,19 @@ export default function App() {
         updateRun(cancelled, conversation.id);
         sourceRef.current?.close();
       }
+      const submittedText = text || "请分析我上传的附件。";
       const nextRun = waiting
         ? await api.provideRunInput(waiting.id, text, uploadedIds)
-        : (await api.createMessage(conversation.id, text, uploadedIds, plugins, selectedSkills)).run;
+        : (await api.createMessage(conversation.id, submittedText, uploadedIds, plugins, selectedSkills)).run;
       setActive((current) => current ? {
         ...current,
-        title: current.runs?.length ? current.title : text.slice(0, 40),
+        title: current.runs?.length ? current.title : submittedText.slice(0, 40),
         runs: waiting
           ? (current.runs || []).map((run) => run.id === nextRun.id ? nextRun : run)
           : [...(current.runs || []), nextRun]
       } : current);
       if (!waiting && !(conversation.runs || []).length) {
-        const renamed = await api.updateConversation(conversation.id, { title: text.slice(0, 40) });
+        const renamed = await api.updateConversation(conversation.id, { title: submittedText.slice(0, 40) });
         setConversations((current) => current.map((item) => item.id === renamed.id ? renamed : item));
       }
       attachments.forEach((item) => item.preview && URL.revokeObjectURL(item.preview));
@@ -404,9 +400,15 @@ export default function App() {
 
   async function resume(run: Run) {
     if (!active) return;
-    const updated = await api.resumeRun(run.id);
-    updateRun(updated, active.id);
-    void followRun(updated, active.id);
+    setError("");
+    try {
+      const updated = await api.resumeRun(run.id);
+      updateRun(updated, active.id);
+      void followRun(updated, active.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "任务恢复失败，请重试");
+      throw reason;
+    }
   }
 
   async function retry(run: Run) {
@@ -616,7 +618,7 @@ export default function App() {
               setDrawerArtifact(artifact);
               setDrawerOpen(true);
             }}
-            onSpeak={api.synthesizeSpeech}
+            onSpeak={(text, signal) => api.synthesizeSpeech(text, undefined, signal)}
           />
         </section>
         <Composer
@@ -639,7 +641,7 @@ export default function App() {
           onSubmit={send}
           onStop={stopCurrent}
           onTranscribe={async (file) => (await api.transcribeAudio(file)).text}
-          onSpeak={api.synthesizeSpeech}
+          onSpeak={(text, signal) => api.synthesizeSpeech(text, undefined, signal)}
           asrAvailable={asrAvailable}
           ttsAvailable={ttsAvailable}
           onListFiles={api.attachments}

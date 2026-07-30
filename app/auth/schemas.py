@@ -24,4 +24,4 @@ class UserResponse(BaseModel):
     id: int
     username: str
     created_at: str
-    role: str = "patient"
+    role: str = "user"

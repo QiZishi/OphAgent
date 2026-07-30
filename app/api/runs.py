@@ -8,9 +8,12 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlmodel import Session
 
 from app.api.dependencies import get_orchestrator, get_runtime_store
 from app.auth.security import get_current_user
+from app.db.crud import get_conversation_by_id
+from app.db.database import get_session
 from app.db.models import User
 from app.domain.models import RunInput, RunRecord
 from app.runtime.document_exports import answer_with_references, render_docx, render_jpg, render_pdf
@@ -34,12 +37,22 @@ async def create_run(
     payload: RunInput,
     current_user: User = Depends(get_current_user),
     orchestrator: RunOrchestrator = Depends(get_orchestrator),
+    session: Session = Depends(get_session),
 ):
     if payload.image_paths or payload.document_paths or payload.audio_paths:
         raise HTTPException(
             status_code=422,
             detail="客户端不能提交服务器文件路径，请先上传并使用 attachment_ids",
         )
+    if payload.artifact_ids:
+        raise HTTPException(
+            status_code=422,
+            detail="当前尚未支持将 Artifact 直接作为 Run 输入",
+        )
+    if payload.conversation_id is not None:
+        conversation = get_conversation_by_id(session, payload.conversation_id)
+        if conversation is None or conversation.user_id != current_user.id:
+            raise HTTPException(status_code=404, detail="Conversation not found")
     try:
         return await orchestrator.create(int(current_user.id), payload)
     except ValueError as exc:
@@ -89,6 +102,8 @@ async def resume_run(
         return await orchestrator.resume(run_id, int(current_user.id))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/{run_id}/retry", response_model=RunRecord, status_code=202)

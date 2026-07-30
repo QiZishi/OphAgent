@@ -61,7 +61,7 @@ const events = [
 ];
 
 async function mockWorkspace(page: Page) {
-  await page.route("**/auth/me", (route) => route.fulfill({ json: { id: 1, username: "视觉测试用户", role: "patient" } }));
+  await page.route("**/auth/me", (route) => route.fulfill({ json: { id: 1, username: "视觉测试用户", role: "user" } }));
   await page.route("**/api/v1/conversations?*", (route) => route.fulfill({
     json: { items: [{ id: 1, title: "视网膜病变随访", agent_type: "interactive_vqa", created_at: "2026-07-28T06:00:00Z", pinned: true }], total: 1, skip: 0, limit: 100 }
   }));
@@ -224,10 +224,9 @@ test("项目、文件、插件、记忆、知识库和技能入口都可实际�
     await expect(page.getByRole("heading", { name: heading, exact: true }).first()).toBeVisible();
   }
   await page.getByRole("navigation", { name: "工作区" }).getByRole("button", { name: "技能", exact: true }).click();
-  await expect(page.getByText("系统级 Skill 由管理员维护")).toBeVisible();
-  await expect(page.getByText("导入候选 SKILL.md")).toHaveCount(0);
+  await expect(page.getByText("导入候选 SKILL.md")).toBeVisible();
   await page.getByRole("navigation", { name: "工作区" }).getByRole("button", { name: "知识库", exact: true }).click();
-  await expect(page.getByRole("button", { name: "重建向量索引" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "重建向量索引" })).toBeVisible();
   await page.getByRole("navigation", { name: "工作区" }).getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("region", { name: "持续改进状态" })).toContainText("生产自动变更：关闭");
   await expect(page.getByRole("region", { name: "持续改进状态" })).toContainText("待离线评测候选");

@@ -4,10 +4,11 @@ import { pluginLabel } from "../features/plugins";
 import type { PlanNode, Run, RunEvent } from "../types";
 import { LoadingDots } from "./LoadingDots";
 
-export function ActivityCard({ run, events, onResume }: { run: Run; events: RunEvent[]; onResume: () => void }) {
+export function ActivityCard({ run, events, onResume }: { run: Run; events: RunEvent[]; onResume: () => Promise<void> | void }) {
   const terminal = ["completed", "completed_with_warnings", "interrupted", "failed", "cancelled"].includes(run.status);
-  const recoverable = ["failed", "interrupted"].includes(run.status);
+  const recoverable = ["failed", "interrupted", "cancelled"].includes(run.status);
   const [open, setOpen] = useState(!terminal);
+  const [recovering, setRecovering] = useState(false);
   const terminalEvent = [...events].reverse().find((event) =>
     ["run.completed", "run.failed", "run.cancelled"].includes(event.type)
   );
@@ -68,8 +69,29 @@ export function ActivityCard({ run, events, onResume }: { run: Run; events: RunE
           ))}
           {recoverable && (
             <div className="activity-recovery">
-              <p>{run.status === "interrupted" ? "服务重启时保留了已完成结果，可从未完成步骤继续。" : run.error_message || "必要步骤未完成。已完成的内容和附件均已保留。"}</p>
-              <button onClick={onResume}><RotateCw size={14} />精简后重试</button>
+              <p>{
+                run.status === "interrupted"
+                  ? "服务重启时保留了已完成结果，可从未完成步骤继续。"
+                  : run.status === "cancelled"
+                    ? "任务已按你的要求停止；已完成步骤和附件仍然保留，可以从未完成步骤继续。"
+                    : run.error_message || "必要步骤未完成。已完成的内容和附件均已保留。"
+              }</p>
+              <button
+                disabled={recovering}
+                onClick={async () => {
+                  if (recovering) return;
+                  setRecovering(true);
+                  try {
+                    await onResume();
+                  } finally {
+                    setRecovering(false);
+                  }
+                }}
+              ><RotateCw size={14} />{
+                recovering
+                  ? "正在恢复"
+                  : run.status === "cancelled" ? "继续任务" : "从检查点重试"
+              }</button>
             </div>
           )}
           {run.status === "waiting_for_user" && (

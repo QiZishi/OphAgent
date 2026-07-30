@@ -30,3 +30,7 @@ MEDICAL_AGENT_SYSTEM_OPTIMIZATION_GUIDE.md
 /docs/*
 !/docs/.gitkeep
 /OphVLM-R1项目总览.md
+
+# Local review traces may contain sensitive prompts and must never be committed
+/.aris/traces/
+/.aris/meta/

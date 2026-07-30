@@ -105,10 +105,13 @@ class DifferentialDiagnosis(BaseModel):
 
 class ClinicalState(BaseModel):
     chief_complaint: str | None = None
+    chief_complaint_fact: ClinicalFact | None = None
     timeline: list[ClinicalFact] = Field(default_factory=list)
     positives: list[ClinicalFact] = Field(default_factory=list)
     negatives: list[ClinicalFact] = Field(default_factory=list)
+    history: list[ClinicalFact] = Field(default_factory=list)
     examinations: list[ClinicalFact] = Field(default_factory=list)
+    imaging_observations: list[ClinicalFact] = Field(default_factory=list)
     medications: list[ClinicalFact] = Field(default_factory=list)
     allergies: list[ClinicalFact] = Field(default_factory=list)
     red_flags: list[ClinicalFact] = Field(default_factory=list)
@@ -201,6 +204,17 @@ class ContextStats(BaseModel):
     tokens_after: int = Field(default=0, ge=0)
     cache_hit: bool = False
     source_hash: str | None = None
+    compaction_status: Literal[
+        "not_needed",
+        "pending",
+        "completed",
+        "failed",
+    ] = "not_needed"
+    compaction_method: Literal[
+        "none",
+        "model_structured_summary",
+    ] = "none"
+    compaction_attempts: int = Field(default=0, ge=0)
 
 
 class RunInput(BaseModel):
@@ -340,7 +354,7 @@ class KnowledgeSource(BaseModel):
     id: str
     title: str
     path: str
-    source_type: Literal["guideline", "record", "web", "user"] = "guideline"
+    source_type: Literal["guideline", "record", "web", "user"] = "record"
     institution: str | None = None
     region: str | None = None
     published_at: str | None = None
@@ -351,6 +365,9 @@ class KnowledgeSource(BaseModel):
     imported_by: int | None = None
     imported_at: datetime = Field(default_factory=utc_now)
     verified: bool = False
+    verified_by: int | None = None
+    verified_at: datetime | None = None
+    verification_note: str | None = None
     checksum: str | None = None
 
 
@@ -486,6 +503,7 @@ class CapabilityState(BaseModel):
 
 
 class ImageRegion(BaseModel):
+    image_id: str = Field(min_length=1, max_length=128)
     label: str
     x: float = Field(ge=0)
     y: float = Field(ge=0)

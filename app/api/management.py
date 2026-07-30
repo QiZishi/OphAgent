@@ -16,7 +16,7 @@ from app.api.dependencies import (
     get_runtime_store,
     get_skill_store,
 )
-from app.auth.security import get_current_user, require_admin
+from app.auth.security import get_current_user
 from app.core.config import settings
 from app.db.crud import record_audit
 from app.db.database import get_session
@@ -416,7 +416,12 @@ async def create_memory(
     store: MemoryStore = Depends(get_memory_store),
     session: Session = Depends(get_session),
 ):
-    created = await store.create(MemoryRecord(user_id=int(current_user.id), **payload.model_dump()))
+    try:
+        created = await store.create(
+            MemoryRecord(user_id=int(current_user.id), **payload.model_dump()),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     await _record_memory_evolution(store, created, "created")
     _audit(session, current_user, "create", "memory", created.id)
     return created
@@ -452,6 +457,8 @@ async def update_memory(
         return updated
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Memory not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.delete("/memories/{memory_id}", status_code=204)
@@ -480,6 +487,8 @@ async def delete_memory(
 
 class SkillStatusUpdate(BaseModel):
     status: Literal["enabled", "disabled", "rejected"]
+    force: bool = False
+    risk_acknowledgement: str | None = Field(default=None, max_length=1000)
 
 
 class SkillImport(BaseModel):
@@ -497,7 +506,7 @@ async def list_skills(
 @router.post("/skills/import", response_model=SkillRecord, status_code=201)
 async def import_skill(
     payload: SkillImport,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     store: SkillStore = Depends(get_skill_store),
     session: Session = Depends(get_session),
 ):
@@ -512,7 +521,7 @@ async def import_skill(
 @router.post("/skills/{skill_id}/validate", response_model=SkillRecord)
 async def validate_skill(
     skill_id: str,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     store: SkillStore = Depends(get_skill_store),
     session: Session = Depends(get_session),
 ):
@@ -528,19 +537,28 @@ async def validate_skill(
 async def update_skill(
     skill_id: str,
     payload: SkillStatusUpdate,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     store: SkillStore = Depends(get_skill_store),
     session: Session = Depends(get_session),
 ):
     try:
-        updated = await store.set_status(skill_id, payload.status)
+        updated = await store.set_status(
+            skill_id,
+            payload.status,
+            force=payload.force,
+            approved_by=f"user:{current_user.id}",
+            acknowledgement=payload.risk_acknowledgement,
+        )
         _audit(
             session,
             current_user,
             "set_status",
             "skill",
             skill_id,
-            f'{{"status":"{payload.status}"}}',
+            (
+                f'{{"status":"{payload.status}",'
+                f'"force":{str(payload.force).lower()}}}'
+            ),
         )
         return updated
     except KeyError as exc:
@@ -579,7 +597,7 @@ async def knowledge_status(
 async def list_knowledge_sources(current_user: User = Depends(get_current_user)):
     return SourceRegistry(settings).list(
         user_id=int(current_user.id),
-        include_private=current_user.role == "admin",
+        include_private=False,
     )
 
 
@@ -593,6 +611,7 @@ class KnowledgeSourceUpdate(BaseModel):
     status: Literal["current", "expired", "superseded", "unknown"] | None = None
     superseded_by: str | None = Field(default=None, max_length=500)
     verified: bool | None = None
+    verification_note: str | None = Field(default=None, max_length=1000)
 
 
 @router.patch("/knowledge/sources/{source_id}", response_model=KnowledgeSource)
@@ -607,19 +626,22 @@ async def update_knowledge_source(
     try:
         source = registry.get(source_id)
         if (
-            current_user.role != "admin"
+            source.imported_by is not None
             and source.imported_by != int(current_user.id)
         ):
             raise HTTPException(status_code=404, detail="Knowledge source not found")
         updated = registry.update(
             source_id,
             payload.model_dump(exclude_none=True),
+            verified_by=int(current_user.id),
         )
         clients.retriever.invalidate()
         _audit(session, current_user, "update", "knowledge_source", source_id)
         return updated
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Knowledge source not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/knowledge/import", response_model=KnowledgeSource, status_code=201)
@@ -663,7 +685,7 @@ async def import_knowledge_source(
 async def rebuild_knowledge_index(
     background_tasks: BackgroundTasks,
     include_embeddings: bool = True,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(get_current_user),
     clients: CapabilityClients = Depends(get_capability_clients),
     session: Session = Depends(get_session),
 ):

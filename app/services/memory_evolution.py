@@ -56,7 +56,14 @@ def preference_key(content: str) -> str | None:
     return None
 
 
-def _is_low_authority_content(value: str) -> bool:
+def is_runtime_memory_content_allowed(value: str) -> bool:
+    """Return whether user memory stays in the low-authority data plane.
+
+    Memory may describe user facts and preferences, but it must never become a
+    second channel for changing system constraints or business policy.  This
+    predicate is shared by conversational extraction and every CRUD write path
+    so the API cannot bypass the same boundary.
+    """
     return not PROTECTED_POLICY_PATTERN.search(value)
 
 
@@ -72,7 +79,7 @@ def parse_online_memory_commands(query: str) -> list[OnlineMemoryCommand]:
     if update_match:
         old = _clean(update_match.group("old"))
         new = _clean(update_match.group("new"))
-        if old and new and _is_low_authority_content(new):
+        if old and new and is_runtime_memory_content_allowed(new):
             return [
                 OnlineMemoryCommand(
                     action="update",
@@ -99,7 +106,7 @@ def parse_online_memory_commands(query: str) -> list[OnlineMemoryCommand]:
     create_match = CREATE_PATTERN.search(text)
     if create_match:
         content = _clean(create_match.group("content"))
-        if content and _is_low_authority_content(content):
+        if content and is_runtime_memory_content_allowed(content):
             return [
                 OnlineMemoryCommand(
                     action="create",

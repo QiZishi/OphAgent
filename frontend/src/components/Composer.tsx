@@ -14,7 +14,7 @@ import {
   StopCircle,
   X
 } from "lucide-react";
-import { ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import { ClipboardEvent, DragEvent, FormEvent, KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { PLUGINS } from "../features/plugins";
 import type { AttachmentRecord, LocalAttachment, PluginId, SkillRecord } from "../types";
 import { LoadingDots } from "./LoadingDots";
@@ -35,7 +35,7 @@ interface ComposerProps {
   onSubmit: (textOverride?: string) => Promise<void> | void;
   onStop: () => void;
   onTranscribe: (file: File) => Promise<string>;
-  onSpeak: (text: string) => Promise<Blob>;
+  onSpeak: (text: string, signal?: AbortSignal) => Promise<Blob>;
   onListFiles: () => Promise<AttachmentRecord[]>;
   onChooseExisting: (attachment: AttachmentRecord) => void;
   asrAvailable: boolean;
@@ -70,6 +70,9 @@ export function Composer(props: ComposerProps) {
   const spokenAudio = useRef<HTMLAudioElement | null>(null);
   const spokenAudioUrlRef = useRef("");
   const lastSpokenAnswer = useRef("");
+  const speechAbort = useRef<AbortController | null>(null);
+  const realtimeDialog = useRef<HTMLElement | null>(null);
+  const realtimePreviousFocus = useRef<HTMLElement | null>(null);
   const selectedPluginNames = PLUGINS
     .filter((item) => props.plugins.includes(item.id))
     .map((item) => item.label);
@@ -126,30 +129,40 @@ export function Composer(props: ComposerProps) {
     if (mediaRecorder.current?.state === "recording") mediaRecorder.current.stop();
     mediaStream.current?.getTracks().forEach((track) => track.stop());
     spokenAudio.current?.pause();
+    speechAbort.current?.abort();
     if (spokenAudioUrlRef.current) URL.revokeObjectURL(spokenAudioUrlRef.current);
   }, []);
 
   useEffect(() => {
     if (!realtimeOpen || !latestAnswer || latestAnswer === lastSpokenAnswer.current) return;
     lastSpokenAnswer.current = latestAnswer;
-    const cleanText = latestAnswer.replace(/[#>*_`[\]]/g, "").slice(0, 600);
+    const segments = splitRealtimeSpeech(latestAnswer.replace(/[#>*_`[\]]/g, ""));
     let cancelled = false;
+    const controller = new AbortController();
+    speechAbort.current?.abort();
+    speechAbort.current = controller;
     const speak = async () => {
       setRealtimePhase("speaking");
       try {
         if (!ttsAvailable) throw new Error("服务端 TTS 未配置");
-        const blob = await onSpeak(cleanText);
-        if (cancelled) return;
-        if (spokenAudioUrlRef.current) URL.revokeObjectURL(spokenAudioUrlRef.current);
-        const url = URL.createObjectURL(blob);
-        spokenAudioUrlRef.current = url;
-        setSpokenAudioUrl(url);
-        const audio = new Audio(url);
-        spokenAudio.current = audio;
-        audio.onended = () => setRealtimePhase("idle");
-        await audio.play();
+        for (const segment of segments) {
+          const blob = await onSpeak(segment, controller.signal);
+          if (cancelled || controller.signal.aborted) return;
+          if (spokenAudioUrlRef.current) URL.revokeObjectURL(spokenAudioUrlRef.current);
+          const url = URL.createObjectURL(blob);
+          spokenAudioUrlRef.current = url;
+          setSpokenAudioUrl(url);
+          const audio = new Audio(url);
+          spokenAudio.current = audio;
+          await new Promise<void>((resolve, reject) => {
+            audio.onended = () => resolve();
+            audio.onerror = () => reject(new Error("语音播放失败"));
+            audio.play().catch(reject);
+          });
+        }
+        if (!cancelled) setRealtimePhase("idle");
       } catch (reason) {
-        if (cancelled) return;
+        if (cancelled || controller.signal.aborted) return;
         setRealtimePhase("ready");
         setVoiceError(reason instanceof Error
           ? `${reason.message}；回答已保留为文字。`
@@ -159,12 +172,14 @@ export function Composer(props: ComposerProps) {
     void speak();
     return () => {
       cancelled = true;
+      controller.abort();
+      spokenAudio.current?.pause();
     };
   }, [latestAnswer, onSpeak, realtimeOpen, ttsAvailable]);
 
   function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (props.value.trim() && !props.submitting) props.onSubmit();
+    if ((props.value.trim() || props.attachments.length) && !props.submitting) props.onSubmit();
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -184,6 +199,9 @@ export function Composer(props: ComposerProps) {
       props.onFiles(supported);
       setAddOpen(false);
       setLibraryOpen(false);
+    }
+    if (supported.length !== files.length) {
+      setToolNotice("部分文件类型不受支持；仅接受眼科影像、音频、PDF、TXT 和 Markdown。");
     }
   }
 
@@ -274,6 +292,7 @@ export function Composer(props: ComposerProps) {
   function startRealtime() {
     setVoiceError("");
     lastSpokenAnswer.current = props.latestAnswer || "";
+    realtimePreviousFocus.current = document.activeElement as HTMLElement | null;
     setRealtimeOpen(true);
     if (!props.asrAvailable) {
       setRealtimePhase("error");
@@ -283,7 +302,7 @@ export function Composer(props: ComposerProps) {
     void startDictation(true);
   }
 
-  function closeRealtime() {
+  const closeRealtime = useCallback(() => {
     if (mediaRecorder.current?.state === "recording") {
       discardRecording.current = true;
       mediaRecorder.current.stop();
@@ -292,11 +311,46 @@ export function Composer(props: ComposerProps) {
     setRealtimeOpen(false);
     setRealtimePhase("idle");
     spokenAudio.current?.pause();
+    speechAbort.current?.abort();
+    speechAbort.current = null;
     spokenAudio.current = null;
     if (spokenAudioUrlRef.current) URL.revokeObjectURL(spokenAudioUrlRef.current);
     spokenAudioUrlRef.current = "";
     setSpokenAudioUrl("");
-  }
+    requestAnimationFrame(() => realtimePreviousFocus.current?.focus());
+  }, []);
+
+  useEffect(() => {
+    if (!realtimeOpen) return;
+    const dialog = realtimeDialog.current;
+    const focusable = () => Array.from(
+      dialog?.querySelectorAll<HTMLElement>(
+        "button, audio[controls], [href], input, textarea, [tabindex]:not([tabindex='-1'])"
+      ) || []
+    );
+    focusable()[0]?.focus();
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRealtime();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) return;
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [closeRealtime, realtimeOpen]);
 
   return (
     <div
@@ -443,7 +497,7 @@ export function Composer(props: ComposerProps) {
           {props.running || props.submitting ? (
             <button type="button" className="stop-button" onClick={props.onStop} disabled={!props.running} aria-label="停止当前任务"><Square size={14} />停止</button>
           ) : (
-            <button className="send-button" disabled={!props.value.trim()} aria-label="发送"><Send size={18} /></button>
+            <button className="send-button" disabled={!props.value.trim() && !props.attachments.length} aria-label="发送"><Send size={18} /></button>
           )}
         </div>
       </form>
@@ -451,7 +505,9 @@ export function Composer(props: ComposerProps) {
       {voiceError && <div className="voice-error" role="alert">{voiceError}<button onClick={() => { setVoiceError(""); if (voiceState === "error") setVoiceState("idle"); }}>关闭</button></div>}
       {toolNotice && <div className="composer-status" role="status">{toolNotice}<button onClick={() => setToolNotice("")}>关闭</button></div>}
       {realtimeOpen && (
-        <section className="realtime-voice" role="dialog" aria-modal="true" aria-label="语音对话模式">
+        <>
+        <button className="voice-dialog-scrim" aria-label="退出语音对话" onClick={closeRealtime} />
+        <section ref={realtimeDialog} className="realtime-voice" role="dialog" aria-modal="true" aria-label="语音对话模式">
           <header><span className={`clinical-pulse ${realtimeListening ? "listening" : ""}`} /><div><strong>语音对话</strong><small>{voicePhaseLabel(realtimePhase, props.ttsAvailable)}</small></div><button className="icon-button" onClick={closeRealtime} aria-label="退出语音对话"><X size={18} /></button></header>
           <div className="realtime-transcript">{props.value || "点击开始说话；结束后将安全转写并直接提问。"}</div>
           {spokenAudioUrl && <audio className="voice-answer-player" src={spokenAudioUrl} controls preload="metadata" />}
@@ -474,10 +530,32 @@ export function Composer(props: ComposerProps) {
             </button>
           </footer>
         </section>
+        </>
       )}
       <p className="composer-note">人工智能可能遗漏、误判或使用过期资料，请结合原始检查与专业判断；如出现不适、突发视力下降或剧烈眼痛，请及时就医。</p>
     </div>
   );
+}
+
+function splitRealtimeSpeech(text: string, limit = 600) {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) return [];
+  const segments: string[] = [];
+  let remaining = normalized;
+  while (remaining.length > limit) {
+    const candidate = remaining.slice(0, limit);
+    const boundary = Math.max(
+      candidate.lastIndexOf("。"),
+      candidate.lastIndexOf("！"),
+      candidate.lastIndexOf("？"),
+      candidate.lastIndexOf("；")
+    );
+    const cut = boundary >= Math.floor(limit * 0.45) ? boundary + 1 : limit;
+    segments.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).trim();
+  }
+  if (remaining) segments.push(remaining);
+  return segments;
 }
 
 function voicePhaseLabel(

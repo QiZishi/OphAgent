@@ -93,7 +93,7 @@ class RuntimeStore:
                     PRIMARY KEY(run_id, sequence),
                     FOREIGN KEY(run_id) REFERENCES runtime_runs(id) ON DELETE CASCADE
                 );
-                CREATE UNIQUE INDEX IF NOT EXISTS ux_runtime_terminal_event
+                CREATE INDEX IF NOT EXISTS ix_runtime_terminal_event
                     ON runtime_events(run_id, type)
                     WHERE type IN ('run.completed', 'run.failed', 'run.cancelled');
 
@@ -138,6 +138,11 @@ class RuntimeStore:
                     ON runtime_attachments(conversation_id);
                 """
             )
+            # Older prototypes enforced one event per terminal *type* for the
+            # whole Run, which prevented a resumed attempt from recording its
+            # own failure. Terminal uniqueness is now enforced per attempt in
+            # append_event().
+            connection.execute("DROP INDEX IF EXISTS ux_runtime_terminal_event")
 
     async def get_provider_config(self, user_id: int) -> dict:
         with self._connect() as connection:
@@ -264,7 +269,12 @@ class RuntimeStore:
                 raise ValueError("run already exists") from exc
         return run
 
-    async def save_run(self, run: RunRecord) -> None:
+    async def save_run(
+        self,
+        run: RunRecord,
+        *,
+        allow_resume: bool = False,
+    ) -> bool:
         run.updated_at = utc_now()
         async with self._lock(run.id):
             with self._connect() as connection:
@@ -277,9 +287,31 @@ class RuntimeStore:
                     connection.rollback()
                     raise KeyError(run.id)
                 current = RunRecord.model_validate_json(row["payload_json"])
-                if current.status in TERMINAL and run.status not in TERMINAL:
+                valid_resume = (
+                    allow_resume
+                    and current.status
+                    in {
+                        RunStatus.INTERRUPTED,
+                        RunStatus.FAILED,
+                        RunStatus.CANCELLED,
+                    }
+                    and run.status == RunStatus.QUEUED
+                    and run.attempt > current.attempt
+                )
+                if run.version != int(row["version"]) and not valid_resume:
                     connection.rollback()
-                    return
+                    return False
+                if current.status in TERMINAL and run.status not in TERMINAL:
+                    if not valid_resume:
+                        connection.rollback()
+                        return False
+                if (
+                    current.status in TERMINAL
+                    and run.status in TERMINAL
+                    and current.status != run.status
+                ):
+                    connection.rollback()
+                    return False
                 run.version = int(row["version"]) + 1
                 connection.execute(
                     """
@@ -299,6 +331,7 @@ class RuntimeStore:
                     ),
                 )
                 connection.commit()
+                return True
 
     async def get_run(self, run_id: str) -> RunRecord | None:
         with self._connect() as connection:
@@ -420,11 +453,25 @@ class RuntimeStore:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 if event.type in FINAL_EVENT_TYPES:
-                    existing = connection.execute(
-                        "SELECT sequence FROM runtime_events WHERE run_id = ? AND type = ?",
-                        (event.run_id, event.type),
-                    ).fetchone()
-                    if existing is not None:
+                    attempt = int(event.data.get("attempt", 1))
+                    existing_rows = connection.execute(
+                        """
+                        SELECT payload_json FROM runtime_events
+                        WHERE run_id = ?
+                          AND type IN ('run.completed', 'run.failed', 'run.cancelled')
+                        """,
+                        (event.run_id,),
+                    ).fetchall()
+                    if any(
+                        int(
+                            RunEvent.model_validate_json(row["payload_json"]).data.get(
+                                "attempt",
+                                1,
+                            ),
+                        )
+                        == attempt
+                        for row in existing_rows
+                    ):
                         connection.rollback()
                         return
                 row = connection.execute(
@@ -450,6 +497,92 @@ class RuntimeStore:
                 connection.commit()
         async with self._condition(event.run_id):
             self._condition(event.run_id).notify_all()
+
+    async def commit_terminal(self, run: RunRecord, event: RunEvent) -> bool:
+        """Atomically persist a terminal state and its per-attempt event."""
+        if run.status not in TERMINAL or event.type not in FINAL_EVENT_TYPES:
+            raise ValueError("commit_terminal 只接受终态及终态事件")
+        async with self._lock(run.id):
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT version, payload_json FROM runtime_runs WHERE id = ?",
+                    (run.id,),
+                ).fetchone()
+                if row is None:
+                    connection.rollback()
+                    raise KeyError(run.id)
+                current = RunRecord.model_validate_json(row["payload_json"])
+                if run.version != int(row["version"]):
+                    connection.rollback()
+                    return False
+                if current.status in TERMINAL and current.status != run.status:
+                    connection.rollback()
+                    return False
+                attempt = int(event.data.get("attempt", run.attempt))
+                terminal_rows = connection.execute(
+                    """
+                    SELECT payload_json FROM runtime_events
+                    WHERE run_id = ?
+                      AND type IN ('run.completed', 'run.failed', 'run.cancelled')
+                    """,
+                    (run.id,),
+                ).fetchall()
+                if any(
+                    int(
+                        RunEvent.model_validate_json(item["payload_json"]).data.get(
+                            "attempt",
+                            1,
+                        ),
+                    )
+                    == attempt
+                    for item in terminal_rows
+                ):
+                    connection.rollback()
+                    return False
+                run.updated_at = utc_now()
+                run.version = int(row["version"]) + 1
+                sequence_row = connection.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) AS sequence FROM runtime_events WHERE run_id = ?",
+                    (run.id,),
+                ).fetchone()
+                event.sequence = int(sequence_row["sequence"]) + 1
+                connection.execute(
+                    """
+                    UPDATE runtime_runs
+                    SET conversation_id = ?, idempotency_key = ?, status = ?, version = ?,
+                        payload_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        run.input.conversation_id,
+                        run.input.idempotency_key,
+                        run.status.value,
+                        run.version,
+                        run.model_dump_json(),
+                        run.updated_at.isoformat(),
+                        run.id,
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO runtime_events
+                        (run_id, sequence, event_id, type, payload_json, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event.run_id,
+                        event.sequence,
+                        event.id,
+                        event.type,
+                        event.model_dump_json(),
+                        event.timestamp.isoformat(),
+                    ),
+                )
+                connection.commit()
+        async with self._condition(event.run_id):
+            self._condition(event.run_id).notify_all()
+        return True
 
     async def get_events(self, run_id: str, after: int = 0) -> list[RunEvent]:
         with self._connect() as connection:

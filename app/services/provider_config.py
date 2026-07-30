@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import ipaddress
 from typing import Any
+from urllib.parse import urlsplit
 
 from cryptography.fernet import Fernet, InvalidToken
 from pydantic import BaseModel, Field, SecretStr
@@ -72,6 +74,11 @@ class ProviderConfigStore:
                 continue
             if provider != "mineru" and not incoming.url.strip():
                 raise ValueError(f"{provider} 使用个人配置时必须填写 URL")
+            if provider != "mineru":
+                _validate_personal_provider_url(
+                    incoming.url,
+                    allow_private=self.defaults.ALLOW_PRIVATE_PROVIDER_URLS,
+                )
             if fields["model"] and not incoming.model.strip():
                 raise ValueError(f"{provider} 使用个人配置时必须填写模型名")
             encrypted = existing.get("api_key_encrypted")
@@ -175,3 +182,41 @@ class ProviderConfigStore:
             return self.cipher.decrypt(value.encode("ascii")).decode("utf-8")
         except (InvalidToken, ValueError):
             return ""
+
+
+def _validate_personal_provider_url(
+    value: str,
+    *,
+    allow_private: bool,
+) -> None:
+    """Prevent user-configured provider endpoints from becoming an SSRF path.
+
+    Operators can still configure trusted local providers through ``.env``.
+    Private endpoints for per-user configuration require an explicit deployment
+    opt-in because all ordinary accounts share the same product capabilities.
+    """
+    parts = urlsplit(value.strip())
+    allowed_schemes = {"http", "https"} if allow_private else {"https"}
+    if parts.scheme not in allowed_schemes:
+        raise ValueError("个人 Provider URL 必须使用 HTTPS")
+    if not parts.hostname or parts.username or parts.password:
+        raise ValueError("个人 Provider URL 缺少主机或包含不允许的凭据")
+    hostname = parts.hostname.rstrip(".").casefold()
+    if not allow_private and (
+        hostname == "localhost"
+        or hostname.endswith((".localhost", ".local", ".internal", ".home.arpa"))
+    ):
+        raise ValueError("个人 Provider URL 不能指向本机或内网主机")
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return
+    if not allow_private and (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    ):
+        raise ValueError("个人 Provider URL 不能指向本机、内网或保留地址")

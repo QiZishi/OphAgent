@@ -15,6 +15,14 @@ class BudgetExceeded(RuntimeErrorBase):
     code = "budget_exceeded"
 
 
+class ContextCompactionError(RuntimeErrorBase):
+    code = "context_compaction_failed"
+
+    def __init__(self, detail: str, *, issues: list[str] | None = None) -> None:
+        super().__init__(detail)
+        self.issues = issues or [detail]
+
+
 class RunCancelled(RuntimeErrorBase):
     code = "run_cancelled"
 

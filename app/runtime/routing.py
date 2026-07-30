@@ -87,18 +87,19 @@ def route_task(
     matches_quick_pattern = any(pattern.match(query) for pattern in _QUICK_PATTERNS)
     is_quick = (
         risk == RiskLevel.ROUTINE
+        and not has_images
+        and not has_documents
+        and not explicit_report
+        and not explicit_knowledge
+        and not explicit_assessment
+        and not explicit_localization
+        and not contextual_follow_up
+        and not looks_clinical
         and (
-            run_input.mode == "quick"
+            (run_input.mode == "quick" and (matches_quick_pattern or len(query) <= 80))
             or (
                 run_input.mode == "auto"
-                and not has_images
-                and not has_documents
-                and not explicit_report
-                and not explicit_knowledge
-                and not explicit_assessment
-                and not explicit_localization
-                and not contextual_follow_up
-                and (matches_quick_pattern or (len(query) <= 80 and not looks_clinical))
+                and (matches_quick_pattern or len(query) <= 80)
             )
         )
     )

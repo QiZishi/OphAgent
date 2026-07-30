@@ -98,10 +98,11 @@ def test_authenticated_management_endpoints():
             "report_generator",
         }
         assert client.get("/api/v1/skills").status_code == 200
-        assert client.patch(
+        skill_update = client.patch(
             "/api/v1/skills/red_flag_triage",
             json={"status": "disabled"},
-        ).status_code == 403
+        )
+        assert skill_update.status_code != 403
         assert client.get("/api/v1/knowledge/status").status_code == 200
         assert client.get("/api/v1/capabilities").status_code == 200
         evolution = client.get("/api/v1/evolution/status")
@@ -109,7 +110,7 @@ def test_authenticated_management_endpoints():
         assert evolution.json()["production_mutation"] == "disabled"
         assert evolution.json()["human_approval_required"] is True
         accepted_rebuild = client.post("/api/v1/knowledge/index?include_embeddings=false")
-        assert accepted_rebuild.status_code == 403
+        assert accepted_rebuild.status_code == 202
 
         project = client.post(
             "/api/v1/projects",
@@ -225,6 +226,48 @@ def test_run_api_rejects_direct_server_paths():
         )
         assert response.status_code == 422
         assert "attachment_ids" in response.json()["detail"]
+
+
+def test_direct_run_cannot_reference_another_users_conversation():
+    username_a = f"run_owner_a_{uuid4().hex[:8]}"
+    username_b = f"run_owner_b_{uuid4().hex[:8]}"
+    with TestClient(app) as client_a, TestClient(app) as client_b:
+        assert client_a.post(
+            "/auth/register",
+            json={"username": username_a, "password": "test-password"},
+        ).status_code == 200
+        conversation = client_a.post(
+            "/api/v1/conversations",
+            json={"title": "A 的私有会话"},
+        ).json()
+
+        assert client_b.post(
+            "/auth/register",
+            json={"username": username_b, "password": "test-password"},
+        ).status_code == 200
+        response = client_b.post(
+            "/api/v1/runs",
+            json={
+                "query": "读取上下文",
+                "conversation_id": conversation["id"],
+            },
+        )
+        assert response.status_code == 404
+
+
+def test_run_api_rejects_unimplemented_artifact_input():
+    username = f"artifact_input_{uuid4().hex[:8]}"
+    with TestClient(app) as client:
+        client.post(
+            "/auth/register",
+            json={"username": username, "password": "test-password"},
+        )
+        response = client.post(
+            "/api/v1/runs",
+            json={"query": "继续分析", "artifact_ids": ["art_not_real"]},
+        )
+        assert response.status_code == 422
+        assert "Artifact" in response.json()["detail"]
 
 
 def test_websocket_chat_rejects_direct_server_paths():

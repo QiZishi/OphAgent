@@ -7,7 +7,6 @@ import {
   Folder,
   Library,
   LogOut,
-  Menu,
   MessageSquarePlus,
   MoreHorizontal,
   PanelLeftClose,
@@ -18,7 +17,7 @@ import {
   Sparkles,
   Trash2
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Conversation, UserProfile } from "../types";
 
 export type WorkspaceView =
@@ -53,6 +52,7 @@ interface SidebarProps {
 
 export function Sidebar(props: SidebarProps) {
   const [menuId, setMenuId] = useState<number | null>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
   const ordered = useMemo(
     () => [...props.conversations].sort((a, b) => Number(b.pinned) - Number(a.pinned)),
     [props.conversations]
@@ -81,7 +81,10 @@ export function Sidebar(props: SidebarProps) {
           <>
             <button className="sidebar-icon-action" onClick={props.onToggleCollapsed} aria-label="展开侧栏"><PanelLeftOpen size={19} /></button>
             <button className="sidebar-icon-action" onClick={props.onNew} aria-label="新对话"><MessageSquarePlus size={19} /></button>
-            <button className="sidebar-icon-action" aria-label="搜索"><Search size={19} /></button>
+            <button className="sidebar-icon-action" onClick={() => {
+              props.onToggleCollapsed();
+              window.setTimeout(() => searchInput.current?.focus());
+            }} aria-label="搜索"><Search size={19} /></button>
             <button className="sidebar-icon-action" onClick={() => props.onNavigate("files")} aria-label="文件库"><Library size={19} /></button>
             <button className="sidebar-icon-action" onClick={() => props.onNavigate("settings")} aria-label="设置"><Settings size={19} /></button>
             <div className="collapsed-spacer" />
@@ -92,10 +95,10 @@ export function Sidebar(props: SidebarProps) {
             <label className="sidebar-search">
               <Search size={16} />
               <span className="sr-only">搜索对话</span>
-              <input value={props.search} onChange={(event) => props.onSearch(event.target.value)} placeholder="搜索" />
+              <input ref={searchInput} value={props.search} onChange={(event) => props.onSearch(event.target.value)} placeholder="搜索" />
             </label>
             <section className="recent-section">
-              <div className="section-label"><span>最近</span><button aria-label="筛选最近对话"><Menu size={14} /></button></div>
+              <div className="section-label"><span>最近</span></div>
               <div className="conversation-list">
                 {ordered.map((conversation) => (
                   <div className={`conversation-row ${props.activeId === conversation.id ? "active" : ""}`} key={conversation.id}>
@@ -137,7 +140,7 @@ export function Sidebar(props: SidebarProps) {
 
         <div className="account-row">
           <span className="avatar">{props.user.username.slice(0, 1).toUpperCase()}</span>
-          {!props.collapsed && <span className="account-name"><strong>{props.user.username}</strong><small>{props.user.role === "admin" ? "管理员" : "个人账户"}</small></span>}
+          {!props.collapsed && <span className="account-name"><strong>{props.user.username}</strong><small>完整功能账户</small></span>}
           {!props.collapsed && <button className="icon-button" onClick={props.onLogout} aria-label="退出登录"><LogOut size={17} /></button>}
         </div>
       </aside>

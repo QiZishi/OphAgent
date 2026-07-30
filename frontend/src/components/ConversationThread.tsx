@@ -34,7 +34,7 @@ interface ThreadProps {
   onDelete: (run: Run) => void;
   onArtifact: (artifact: Artifact) => void;
   onConvertToDocument: (run: Run) => Promise<void>;
-  onSpeak: (text: string) => Promise<Blob>;
+  onSpeak: (text: string, signal?: AbortSignal) => Promise<Blob>;
 }
 
 export function ConversationThread(props: ThreadProps) {
@@ -172,6 +172,7 @@ function TurnGroup({
 }
 
 interface LocalizedRegion {
+  image_id: string;
   label: string;
   x: number;
   y: number;
@@ -197,23 +198,32 @@ function PluginResults({ run, attachments }: { run: Run; attachments: Attachment
   const differentials = Array.isArray(assessment?.differentials)
     ? assessment.differentials as unknown as StructuredDifferential[]
     : [];
-  const image = attachments.find((attachment) => attachment.kind === "image");
+  const images = attachments.filter((attachment) => attachment.kind === "image");
   const localizationSelected = run.route?.selected_plugins.includes("lesion_localizer") || false;
   const localizationFinished = run.plan.find((node) => node.id === "imaging")?.status === "completed";
-  if ((!localizationSelected || !localizationFinished || !image) && !differentials.length) return null;
+  const assessmentSelected = run.route?.selected_plugins.includes("aux_diagnosis") || false;
+  const assessmentFinished = run.plan.find((node) => node.id === "assessment")?.status === "completed";
+  if (
+    (!localizationSelected || !localizationFinished || !images.length)
+    && (!assessmentSelected || !assessmentFinished)
+  ) return null;
   return (
     <div className="plugin-result-stack" aria-label="专业插件结果">
-      {localizationSelected && localizationFinished && image && (
-        <LocalizationResult image={image} regions={regions} />
-      )}
-      {differentials.length > 0 && (
+      {localizationSelected && localizationFinished && images.map((image) => (
+        <LocalizationResult
+          image={image}
+          regions={regions.filter((region) => region.image_id === image.id)}
+          key={image.id}
+        />
+      ))}
+      {assessmentSelected && assessmentFinished && (
         <section className="assessment-result">
           <header>
             <div><span>辅助评估</span><h3>定性鉴别</h3></div>
             <small>支持程度不是患病概率</small>
           </header>
           {typeof assessment?.summary === "string" && <p className="assessment-summary">{assessment.summary}</p>}
-          <div className="differential-list">
+          {differentials.length ? <div className="differential-list">
             {differentials.map((item, index) => (
               <details key={`${item.name}-${index}`} open={index === 0}>
                 <summary>
@@ -230,7 +240,7 @@ function PluginResults({ run, attachments }: { run: Run; attachments: Attachment
                 </div>
               </details>
             ))}
-          </div>
+          </div> : <p className="assessment-summary">当前资料没有形成可负责地展示的候选项；这不是阴性诊断，请结合缺失检查和后续评估继续判断。</p>}
         </section>
       )}
     </div>
@@ -242,7 +252,7 @@ function LocalizationResult({ image, regions }: { image: AttachmentRecord; regio
   return (
     <section className="localization-result">
       <header>
-        <div><span>病灶定位</span><h3>{regions.length ? "经校验的可疑区域" : "未形成坐标标注"}</h3></div>
+        <div><span>病灶定位 · {image.original_filename}</span><h3>{regions.length ? "经校验的可疑区域" : "未形成坐标标注"}</h3></div>
         <small>{regions.length} 个区域</small>
       </header>
       {!regions.length && (
@@ -342,11 +352,19 @@ function CitationGroup({ evidence }: { evidence: Evidence[] }) {
           <article id={`citation-${item.id}`} key={item.id}>
             <span className="evidence-number">{String(index + 1).padStart(2, "0")}</span>
             <div>
-              <small>{item.source_type === "guideline" ? "指南" : item.source_type === "web" ? "网页" : "资料"} · 相关度 {Math.round(item.score * 100)}%</small>
+              <small>
+                {item.source_type === "guideline" ? "指南" : item.source_type === "web" ? "网页" : "资料"}
+                {" · "}{item.verified ? "已核验" : "待核验"}
+                {" · "}{sourceStatusLabel(item.source_status)}
+                {" · "}相关度 {Math.round(item.score * 100)}%
+              </small>
               <h3>{item.title}</h3>
               <p>{item.excerpt}</p>
+              <p className="citation-provenance">
+                {[item.institution, item.published_at, item.version && `版本 ${item.version}`, item.region, item.population && `适用：${item.population}`].filter(Boolean).join(" · ") || "机构、版本与适用范围待核验"}
+              </p>
               <footer>
-                <span>{item.locator || "未提供定位"}</span>
+                <span>{item.locator || "未提供定位"}{item.superseded_by ? ` · 替代来源：${item.superseded_by}` : ""}</span>
                 {item.source.startsWith("http") && <a href={item.source} target="_blank" rel="noreferrer">打开来源<ExternalLink size={13} /></a>}
               </footer>
             </div>
@@ -355,6 +373,14 @@ function CitationGroup({ evidence }: { evidence: Evidence[] }) {
       </div>
     </details>
   );
+}
+
+function sourceStatusLabel(status: Evidence["source_status"]) {
+  return status === "current"
+    ? "有效"
+    : status === "expired"
+      ? "已失效"
+      : status === "superseded" ? "已替代" : "状态未知";
 }
 
 function MessageActions({
@@ -374,7 +400,7 @@ function MessageActions({
   onDelete: () => void;
   onConvert: () => Promise<void>;
   canConvert: boolean;
-  onSpeak: (text: string) => Promise<Blob>;
+  onSpeak: (text: string, signal?: AbortSignal) => Promise<Blob>;
 }) {
   const [copied, setCopied] = useState(false);
   const [speechState, setSpeechState] = useState<"idle" | "loading" | "playing">("idle");
@@ -383,9 +409,11 @@ function MessageActions({
   const audio = useRef<HTMLAudioElement | null>(null);
   const audioUrl = useRef("");
   const speechGeneration = useRef(0);
+  const speechAbort = useRef<AbortController | null>(null);
 
   useEffect(() => () => {
     speechGeneration.current += 1;
+    speechAbort.current?.abort();
     audio.current?.pause();
     if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
   }, []);
@@ -399,6 +427,7 @@ function MessageActions({
   async function toggleSpeech() {
     if (speechState !== "idle") {
       speechGeneration.current += 1;
+      speechAbort.current?.abort();
       audio.current?.pause();
       if (audio.current) audio.current.currentTime = 0;
       setSpeechState("idle");
@@ -407,17 +436,19 @@ function MessageActions({
     setSpeechError("");
     setSpeechState("loading");
     const generation = ++speechGeneration.current;
-    await playSpeechSegments(splitForSpeech(answer), 0, generation);
+    const controller = new AbortController();
+    speechAbort.current = controller;
+    await playSpeechSegments(splitForSpeech(answer), 0, generation, controller);
   }
 
-  async function playSpeechSegments(segments: string[], index: number, generation: number) {
+  async function playSpeechSegments(segments: string[], index: number, generation: number, controller: AbortController) {
     if (generation !== speechGeneration.current) return;
     if (index >= segments.length) {
       setSpeechState("idle");
       return;
     }
     try {
-      const blob = await onSpeak(segments[index]);
+      const blob = await onSpeak(segments[index], controller.signal);
       if (generation !== speechGeneration.current) return;
       audio.current?.pause();
       if (audioUrl.current) URL.revokeObjectURL(audioUrl.current);
@@ -428,7 +459,7 @@ function MessageActions({
       player.onended = () => {
         if (generation !== speechGeneration.current) return;
         if (index + 1 < segments.length) setSpeechState("loading");
-        void playSpeechSegments(segments, index + 1, generation);
+        void playSpeechSegments(segments, index + 1, generation, controller);
       };
       player.onerror = () => {
         if (generation === speechGeneration.current) {

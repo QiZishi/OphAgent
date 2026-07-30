@@ -10,7 +10,21 @@ class FakeRunner:
     """Deterministic model substitute used only by tests."""
 
     async def ask(self, role: str, prompt: str) -> AgentReply:
-        if role == "SupervisorAgent":
+        if role == "ContextCompactorAgent":
+            run_ids = list(dict.fromkeys(re.findall(r'"run_id":\s*"(run_[^"]+)"', prompt)))
+            text = json.dumps(
+                {
+                    "version": "v1",
+                    "summary": "用户此前围绕眼科问题持续咨询，历史回答仍需结合本轮资料复核。",
+                    "user_goals": ["延续此前任务并获得可复核回答"],
+                    "decisions": [],
+                    "unresolved_items": ["结合本轮资料继续核验"],
+                    "corrections": [],
+                    "source_run_ids": run_ids,
+                },
+                ensure_ascii=False,
+            )
+        elif role == "SupervisorAgent":
             text = "先整理临床状态与风险，再检索证据，最后生成可复核报告。"
         elif role == "ClinicalReasoningAgent":
             text = json.dumps(
@@ -116,3 +130,4 @@ class FakeCapabilityClients:
         )
 
     validate_citations = staticmethod(CapabilityClients.validate_citations)
+    canonicalize_citations = staticmethod(CapabilityClients.canonicalize_citations)

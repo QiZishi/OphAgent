@@ -497,6 +497,8 @@ img { max-width: 100%; }
   position: fixed; z-index: 72; left: 50%; bottom: 92px; width: min(560px, calc(100vw - 28px)); transform: translateX(-50%);
   border: 1px solid #cfe8f1; border-radius: 18px; overflow: hidden; background: rgba(255,255,255,.98); box-shadow: 0 22px 70px rgba(22,62,77,.18);
 }
+.voice-dialog-scrim { position: fixed; z-index: 68; inset: 0; border: 0; background: rgba(0,0,0,.12); }
+.realtime-voice { z-index: 69; }
 .realtime-voice header { min-height: 62px; display: flex; align-items: center; gap: 11px; padding: 10px 13px; border-bottom: 1px solid var(--border); }
 .realtime-voice header > div { min-width: 0; flex: 1; }
 .realtime-voice header strong, .realtime-voice header small { display: block; }
@@ -627,6 +629,10 @@ img { max-width: 100%; }
 .toggle-control.on { color: var(--brand-cyan-dark); border-color: #b9dde8; background: var(--brand-soft); }
 .management-toolbar > span { color: var(--text-tertiary); font-size: 12.00px; }
 .management-error { padding: 10px 12px; border-radius: 9px; color: var(--danger); background: var(--danger-soft); font-size: 13.20px; }
+.memory-create { margin: 0 0 18px; padding: 12px; border: 1px solid var(--border); border-radius: 11px; display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 8px; align-items: stretch; background: #fafafa; }
+.memory-create select, .memory-create textarea { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; color: var(--text-primary); background: white; font: inherit; }
+.memory-create textarea { min-height: 48px; resize: vertical; }
+.memory-create button { min-height: 38px; border: 1px solid var(--border); border-radius: 8px; padding: 0 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: white; }
 .management-list, .management-grid { display: grid; gap: 10px; }
 .management-grid { grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
 .management-card { border: 1px solid var(--border); border-radius: 12px; padding: 15px; background: white; }
@@ -668,6 +674,9 @@ img { max-width: 100%; }
 .capability-card div b { font-size: 13.20px; }
 .capability-card div small, .capability-card p { color: var(--text-tertiary); font-size: 9.60px; }
 .capability-card > strong { font-size: 9.60px; text-transform: uppercase; }
+@media (max-width: 760px) {
+  .memory-create { grid-template-columns: 1fr; }
+}
 .capability-card p { grid-column: 2 / -1; line-height: 1.55; }
 .capability-light { width: 8px; height: 8px; margin-top: 3px; border-radius: 50%; background: #aaa; }
 .capability-light.ready { background: var(--success); }

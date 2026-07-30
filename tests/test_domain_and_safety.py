@@ -4,7 +4,7 @@ from app.domain.models import ClinicalState, EvidenceItem, ImageRegion, RiskLeve
 from app.plugins.registry import plugin_registry
 from app.runtime.planning import build_plan
 from app.runtime.routing import route_task
-from app.runtime.safety import apply_red_flag_gate
+from app.runtime.safety import apply_red_flag_gate, validate_public_medical_output
 from app.tools.capabilities import CapabilityClients
 
 
@@ -122,6 +122,18 @@ def test_emergency_risk_overrides_explicit_quick_mode():
     assert node_ids.index("draft") < node_ids.index("critic") < node_ids.index("answer")
 
 
+def test_explicit_quick_cannot_bypass_individualized_medical_route():
+    run_input = RunInput(
+        query="我滴噻吗洛尔后不舒服，要不要马上停药？",
+        mode="quick",
+        plugin_id="interactive_vqa",
+    )
+    route = route_task(run_input, RiskLevel.ROUTINE)
+
+    assert route.intent != "quick_answer"
+    assert route.complexity != "quick"
+
+
 def test_citation_validator_checks_claim_coverage_not_just_one_marker():
     evidence = [
         EvidenceItem(
@@ -145,9 +157,37 @@ def test_citation_validator_checks_claim_coverage_not_just_one_marker():
     assert validation.data["cited_claim_paragraph_count"] == 1
 
 
+def test_citation_prefix_is_expanded_only_when_unique_and_long_enough():
+    evidence = [
+        EvidenceItem(
+            id="ev_1772a5e372e84628a9887c430b187a46",
+            title="指南",
+            source="guideline.md",
+            excerpt="检查建议",
+            verified=True,
+        ),
+        EvidenceItem(
+            id="ev_abcdef0123456789abcdef0123456789",
+            title="共识",
+            source="consensus.md",
+            excerpt="随访建议",
+            verified=True,
+        ),
+    ]
+
+    normalized = CapabilityClients.canonicalize_citations(
+        "检查包括眼压和视野。[ev_1772a5e3] 未知来源。[ev_deadbeef]",
+        evidence,
+    )
+
+    assert f"[{evidence[0].id}]" in normalized
+    assert "[ev_deadbeef]" in normalized
+
+
 def test_normalized_region_cannot_escape_image():
     with pytest.raises(ValueError):
         ImageRegion(
+            image_id="att_fundus",
             label="lesion",
             x=0.9,
             y=0.2,
@@ -156,3 +196,28 @@ def test_normalized_region_cannot_escape_image():
             coordinate_space="normalized",
             confidence=0.8,
         )
+
+
+def test_public_medical_output_blocks_diagnosis_probability_and_direct_medication_change():
+    issues = validate_public_medical_output(
+        "该患者已经确诊为青光眼，患病概率为 92%。建议立即停用噻吗洛尔滴眼液。",
+        individualized=True,
+    )
+
+    assert "overconfident_individual_diagnosis" in issues
+    assert "fabricated_disease_probability" in issues
+    assert "direct_medication_change" in issues
+
+
+def test_public_medical_output_allows_clinician_review_and_general_education():
+    individualized = validate_public_medical_output(
+        "当前资料只支持考虑青光眼，需由眼科医生结合眼压、房角和用药史评估后决定是否调整药物。",
+        individualized=True,
+    )
+    educational = validate_public_medical_output(
+        "青光眼是一组可导致视神经损伤的疾病。",
+        individualized=False,
+    )
+
+    assert individualized == []
+    assert educational == []

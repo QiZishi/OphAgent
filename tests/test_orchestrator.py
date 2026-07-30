@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 
 import pytest
@@ -20,7 +21,11 @@ from app.domain.models import (
 from app.plugins.registry import plugin_registry
 from app.runtime.agents import AgentReply
 from app.runtime.context import ConversationContextManager, ExecutionContextManager
-from app.runtime.errors import CapabilityUnavailable
+from app.runtime.errors import (
+    BudgetExceeded,
+    CapabilityUnavailable,
+    ContextCompactionError,
+)
 from app.runtime.orchestrator import (
     RunOrchestrator,
     _moderate_unconfirmed_medical_language,
@@ -271,7 +276,7 @@ async def test_follow_up_receives_prior_turn_and_inherits_retrieval_route(tmp_pa
 async def test_context_compaction_is_bounded_and_keeps_recent_turns(tmp_path):
     config = build_settings(tmp_path).model_copy(
         update={
-            "CONTEXT_MAX_INPUT_TOKENS": 800,
+            "CONVERSATION_CONTEXT_MAX_INPUT_TOKENS": 800,
             "CONTEXT_RECENT_TURNS": 2,
         },
     )
@@ -289,20 +294,319 @@ async def test_context_compaction_is_bounded_and_keeps_recent_turns(tmp_path):
         )
         await store.create_run(run)
 
-    snapshot = await ConversationContextManager(store, config).build(
+    manager = ConversationContextManager(store, config)
+    snapshot = await manager.build(
         run_id="run_context_test",
         user_id=7,
         run_input=RunInput(query="继续", conversation_id=91),
     )
 
     assert snapshot is not None
+    assert snapshot.compaction_status == "pending"
+    expected_summary_ids = [
+        run_id
+        for run_id in snapshot.source_run_ids
+        if run_id not in snapshot.retained_source_run_ids
+    ]
+    snapshot = await manager.complete_compaction(
+        snapshot,
+        {
+            "version": "v1",
+            "summary": "用户希望延续此前眼科任务；旧回答需要结合本轮资料重新核验。",
+            "user_goals": ["继续此前任务"],
+            "decisions": [],
+            "unresolved_items": ["结合本轮资料复核"],
+            "corrections": [],
+            "source_run_ids": expected_summary_ids,
+        },
+        attempt=1,
+    )
     assert snapshot.stats.source_turns == 6
-    assert snapshot.stats.retained_turns == 2
-    assert snapshot.stats.summarized_turns == 4
+    assert snapshot.stats.retained_turns <= 2
+    assert snapshot.stats.summarized_turns >= 4
     assert snapshot.stats.tokens_after <= 800
-    assert "第 6 轮问题" in snapshot.prompt_text
-    assert "较早对话压缩摘要" in snapshot.prompt_text
-    assert "历史助手回答不是临床事实" in snapshot.prompt_text
+    assert snapshot.compaction_status == "completed"
+    assert snapshot.stats.compaction_method == "model_structured_summary"
+    assert "模型压缩摘要" in snapshot.prompt_text
+    assert "临床事实只能来自" in snapshot.prompt_text
+
+
+@pytest.mark.asyncio
+async def test_context_below_threshold_keeps_full_history_without_summary(tmp_path):
+    config = build_settings(tmp_path).model_copy(
+        update={
+            "CONVERSATION_CONTEXT_MAX_INPUT_TOKENS": 2_000,
+            "CONTEXT_COMPRESSION_TRIGGER_RATIO": 0.82,
+        },
+    )
+    store = RuntimeStore(config)
+    run = RunRecord(
+        user_id=7,
+        status=RunStatus.COMPLETED,
+        input=RunInput(query="不是左眼，是右眼。", conversation_id=92),
+        plugin=plugin_registry.get("interactive_vqa"),
+        answer="收到，我会按右眼信息继续。",
+    )
+    await store.create_run(run)
+
+    snapshot = await ConversationContextManager(store, config).build(
+        run_id="run_context_no_compaction",
+        user_id=7,
+        run_input=RunInput(query="继续", conversation_id=92),
+    )
+
+    assert snapshot is not None
+    assert snapshot.compaction_status == "not_needed"
+    assert snapshot.stats.summarized_turns == 0
+    assert "不是左眼，是右眼。" in snapshot.prompt_text
+    assert "收到，我会按右眼信息继续。" in snapshot.prompt_text
+
+
+@pytest.mark.asyncio
+async def test_failed_run_correction_is_retained_verbatim_during_compaction(tmp_path):
+    config = build_settings(tmp_path).model_copy(
+        update={
+            "CONVERSATION_CONTEXT_MAX_INPUT_TOKENS": 700,
+            "CONTEXT_RECENT_TURNS": 1,
+        },
+    )
+    store = RuntimeStore(config)
+    correction = RunRecord(
+        user_id=7,
+        status=RunStatus.FAILED,
+        input=RunInput(
+            query="更正：不是左眼，是右眼；已经停用噻吗洛尔。",
+            conversation_id=95,
+        ),
+        plugin=plugin_registry.get("interactive_vqa"),
+    )
+    await store.create_run(correction)
+    for index in range(4):
+        await store.create_run(
+            RunRecord(
+                user_id=7,
+                status=RunStatus.COMPLETED,
+                input=RunInput(
+                    query=f"普通历史任务 {index}：" + "背景" * 80,
+                    conversation_id=95,
+                ),
+                plugin=plugin_registry.get("interactive_vqa"),
+                answer="待核验历史回答。" * 90,
+            ),
+        )
+    manager = ConversationContextManager(store, config)
+    snapshot = await manager.build(
+        run_id="run_context_correction",
+        user_id=7,
+        run_input=RunInput(query="继续", conversation_id=95),
+    )
+
+    assert snapshot is not None
+    assert snapshot.compaction_status == "pending"
+    assert correction.id in snapshot.retained_source_run_ids
+    expected_ids = [
+        run_id
+        for run_id in snapshot.source_run_ids
+        if run_id not in snapshot.retained_source_run_ids
+    ]
+    compacted = await manager.complete_compaction(
+        snapshot,
+        {
+            "version": "v1",
+            "summary": "此前还有普通历史任务需要结合本轮资料复核。",
+            "user_goals": ["继续任务"],
+            "decisions": [],
+            "unresolved_items": [],
+            "corrections": [],
+            "source_run_ids": expected_ids,
+        },
+        attempt=1,
+    )
+
+    assert "更正：不是左眼，是右眼；已经停用噻吗洛尔。" in compacted.prompt_text
+
+
+@pytest.mark.asyncio
+async def test_generated_summary_cannot_carry_clinical_detail(tmp_path):
+    config = build_settings(tmp_path).model_copy(
+        update={
+            "CONVERSATION_CONTEXT_MAX_INPUT_TOKENS": 500,
+            "CONTEXT_RECENT_TURNS": 0,
+        },
+    )
+    store = RuntimeStore(config)
+    for index in range(3):
+        await store.create_run(
+            RunRecord(
+                user_id=7,
+                status=RunStatus.COMPLETED,
+                input=RunInput(
+                    query=f"长历史 {index}：" + "背景" * 100,
+                    conversation_id=96,
+                ),
+                plugin=plugin_registry.get("interactive_vqa"),
+                answer="待核验。" * 100,
+            ),
+        )
+    manager = ConversationContextManager(store, config)
+    snapshot = await manager.build(
+        run_id="run_context_reject_clinical_summary",
+        user_id=7,
+        run_input=RunInput(query="继续", conversation_id=96),
+    )
+    assert snapshot is not None
+
+    with pytest.raises(
+        ContextCompactionError,
+        match="模型摘要未通过确定性校验",
+    ) as exc_info:
+        await manager.complete_compaction(
+            snapshot,
+            {
+                "version": "v1",
+                "summary": "用户右眼眼压 30 mmHg，已经停药。",
+                "user_goals": ["继续任务"],
+                "decisions": [],
+                "unresolved_items": [],
+                "corrections": [],
+                "source_run_ids": snapshot.source_run_ids,
+            },
+            attempt=1,
+        )
+    assert "clinical_detail_must_stay_in_lossless_context" in exc_info.value.issues
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_compacts_with_model_and_persists_validated_snapshot(
+    tmp_path,
+):
+    class TrackingRunner(FakeRunner):
+        roles: list[str] = []
+
+        async def ask(self, role, prompt):
+            self.roles.append(role)
+            return await super().ask(role, prompt)
+
+    config = build_settings(tmp_path).model_copy(
+        update={
+            "CONVERSATION_CONTEXT_MAX_INPUT_TOKENS": 700,
+            "CONTEXT_RECENT_TURNS": 2,
+        },
+    )
+    store = RuntimeStore(config)
+    for index in range(5):
+        await store.create_run(
+            RunRecord(
+                user_id=7,
+                status=RunStatus.COMPLETED,
+                input=RunInput(
+                    query=f"第 {index + 1} 轮眼科任务：" + "背景说明" * 70,
+                    conversation_id=93,
+                ),
+                plugin=plugin_registry.get("interactive_vqa"),
+                answer="历史回答需要复核。" * 100,
+            ),
+        )
+    runner = TrackingRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+
+    created = await orchestrator.create(
+        7,
+        RunInput(
+            query="继续说明青光眼检查",
+            plugin_id="interactive_vqa",
+            conversation_id=93,
+        ),
+    )
+    current = await wait_for_terminal(store, created.id)
+    raw_snapshot = await store.get_context_snapshot(created.id)
+    events = await store.get_events(created.id)
+
+    assert current.status in {
+        RunStatus.COMPLETED,
+        RunStatus.COMPLETED_WITH_WARNINGS,
+    }
+    assert runner.roles[0] == "ContextCompactorAgent"
+    assert raw_snapshot is not None
+    assert raw_snapshot["compaction_status"] == "completed"
+    assert raw_snapshot["summary"]["source_run_ids"]
+    assert current.context_stats.compaction_method == "model_structured_summary"
+    assert current.context_stats.tokens_after <= 700
+    assert any(event.type == "context.compacted" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_invalid_context_summary_retries_with_failure_reason(tmp_path):
+    class RepairingRunner(FakeRunner):
+        compaction_prompts: list[str] = []
+
+        async def ask(self, role, prompt):
+            if role != "ContextCompactorAgent":
+                return await super().ask(role, prompt)
+            self.compaction_prompts.append(prompt)
+            reply = await super().ask(role, prompt)
+            if len(self.compaction_prompts) == 1:
+                payload = json.loads(reply.text)
+                payload["source_run_ids"] = ["run_fabricated"]
+                return AgentReply(
+                    text=json.dumps(payload, ensure_ascii=False),
+                    prompt_tokens=20,
+                    completion_tokens=10,
+                )
+            return reply
+
+    config = build_settings(tmp_path).model_copy(
+        update={
+            "CONVERSATION_CONTEXT_MAX_INPUT_TOKENS": 600,
+            "CONTEXT_RECENT_TURNS": 1,
+            "CONTEXT_SUMMARY_MAX_ATTEMPTS": 2,
+        },
+    )
+    store = RuntimeStore(config)
+    for index in range(3):
+        await store.create_run(
+            RunRecord(
+                user_id=7,
+                status=RunStatus.COMPLETED,
+                input=RunInput(
+                    query=f"历史任务 {index}：" + "说明" * 100,
+                    conversation_id=94,
+                ),
+                plugin=plugin_registry.get("interactive_vqa"),
+                answer="待核验回答。" * 100,
+            ),
+        )
+    runner = RepairingRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+
+    created = await orchestrator.create(
+        7,
+        RunInput(
+            query="继续了解青光眼",
+            plugin_id="interactive_vqa",
+            conversation_id=94,
+        ),
+    )
+    current = await wait_for_terminal(store, created.id)
+    events = await store.get_events(created.id)
+
+    assert current.status in {
+        RunStatus.COMPLETED,
+        RunStatus.COMPLETED_WITH_WARNINGS,
+    }
+    assert len(runner.compaction_prompts) == 2
+    assert "source_run_ids_mismatch" in runner.compaction_prompts[1]
+    assert any(event.type == "context.compaction_retrying" for event in events)
 
 
 @pytest.mark.asyncio
@@ -335,16 +639,19 @@ async def test_actual_over_budget_result_is_preserved_with_warning(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_streamed_answer_is_not_published_when_postprocessing_fails(tmp_path):
+async def test_persistent_primary_postprocessor_uses_validated_builtin_fallback(tmp_path):
     class StreamingRunner(FakeRunner):
         calls = 0
 
         async def ask_stream(self, role, prompt, on_delta):
             self.calls += 1
-            for character in "青光眼是一组进行性视神经病变。":
+            evidence_ids = re.findall(r'"id": "(ev_[0-9a-f]+)"', prompt)
+            citation = f" [{evidence_ids[0]}]" if evidence_ids else ""
+            answer = f"青光眼相关信息需要结合完整眼科检查复核。{citation}"
+            for character in answer:
                 await on_delta(character)
             return AgentReply(
-                text="青光眼是一组进行性视神经病变。",
+                text=answer,
                 prompt_tokens=30,
                 completion_tokens=20,
             )
@@ -368,19 +675,21 @@ async def test_streamed_answer_is_not_published_when_postprocessing_fails(tmp_pa
         RunInput(query="什么是青光眼？", plugin_id="interactive_vqa"),
     )
     current = await wait_for_terminal(store, run.id)
-    assert current.status == RunStatus.FAILED
+    assert current.status == RunStatus.COMPLETED_WITH_WARNINGS
     assert runner.calls == 3
-    assert not current.answer
-    assert current.plan[-1].status == NodeStatus.FAILED
+    assert current.answer
+    assert current.plan[-1].status == NodeStatus.COMPLETED
+    assert any("内置确定性安全与引用校验" in item for item in current.warnings)
     events = await store.get_events(run.id)
     deltas = [
         event
         for event in events
         if event.type == "answer.delta"
     ]
-    assert deltas == []
+    assert deltas
     assert len([event for event in events if event.type == "guardrail.retrying"]) == 6
     assert len([event for event in events if event.type == "agent.retrying"]) == 2
+    assert len([event for event in events if event.type == "guardrail.fallback"]) == 1
 
 
 @pytest.mark.asyncio
@@ -528,6 +837,47 @@ async def test_invalid_citations_regenerate_terminal_node_before_publication(tmp
     assert "至多 3 个短段落" in runner.answer_prompts[1]
 
 
+@pytest.mark.asyncio
+async def test_persistent_citation_coverage_failure_keeps_safe_answer_with_warning(
+    tmp_path,
+):
+    class UncitedRunner(FakeRunner):
+        answer_calls = 0
+
+        async def ask_stream(self, role, prompt, on_delta):
+            if role != "AnswerSynthesizer":
+                return await super().ask(role, prompt)
+            self.answer_calls += 1
+            return AgentReply(
+                text="青光眼通常需要结合病史和系统眼科检查进行评估。",
+                prompt_tokens=30,
+                completion_tokens=20,
+            )
+
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    runner = UncitedRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="什么是青光眼？", plugin_id="interactive_vqa"),
+    )
+    current = await wait_for_terminal(store, run.id)
+    events = await store.get_events(run.id)
+
+    assert current.status == RunStatus.COMPLETED_WITH_WARNINGS
+    assert current.answer == "青光眼通常需要结合病史和系统眼科检查进行评估。"
+    assert runner.answer_calls == 2
+    assert any("引用" in warning for warning in current.warnings)
+    assert current.plan[-1].output["output_validation"]["degraded"] is True
+    assert any(event.type == "citation.degraded" for event in events)
+
+
 def test_node_context_is_dependency_scoped_and_compacts_before_limit(tmp_path):
     config = build_settings(tmp_path).model_copy(
         update={
@@ -607,6 +957,67 @@ def test_node_context_is_dependency_scoped_and_compacts_before_limit(tmp_path):
     assert state["medications"]
     assert state["allergies"]
     assert state["unresolved_questions"]
+    assert context.checkpoint.preserved_fields == [
+        "clinical.red_flags",
+        "clinical.medications",
+        "clinical.allergies",
+        "clinical.unresolved_questions",
+        "evidence.id",
+        "evidence.source",
+        "evidence.locator",
+        "evidence.verified",
+        "evidence.source_status",
+    ]
+
+
+def test_context_fails_before_silently_truncating_critical_clinical_fields(
+    tmp_path,
+):
+    config = build_settings(tmp_path).model_copy(
+        update={
+            "CONTEXT_MAX_INPUT_TOKENS": 256,
+            "CONTEXT_COMPRESSION_TRIGGER_RATIO": 0.5,
+        },
+    )
+    clinical = PlanNode(
+        id="clinical",
+        title="临床状态",
+        agent="ClinicalReasoningAgent",
+        capability="main_model",
+        status=NodeStatus.COMPLETED,
+        output={
+            "clinical_state": {
+                "red_flags": [
+                    {
+                        "value": f"必须保留的红旗症状 {index} " + "突发视力下降" * 12,
+                        "source": "user",
+                    }
+                    for index in range(40)
+                ],
+                "medications": [],
+                "allergies": [],
+                "unresolved_questions": [],
+            },
+        },
+    )
+    answer = PlanNode(
+        id="answer",
+        title="回答",
+        agent="AnswerSynthesizer",
+        capability="main_model",
+        depends_on=["clinical"],
+        attempt=1,
+    )
+    run = RunRecord(
+        id="run_critical_context_overflow",
+        user_id=7,
+        input=RunInput(query="继续"),
+        plugin=plugin_registry.get("interactive_vqa"),
+        plan=[clinical, answer],
+    )
+
+    with pytest.raises(BudgetExceeded, match="不能静默截断关键临床字段"):
+        ExecutionContextManager(config).build(run, answer, token_limit=256)
 
 
 @pytest.mark.asyncio
@@ -669,6 +1080,105 @@ async def test_resume_preserves_completed_dependencies_and_requeues_failure_desc
     assert event.type == "run.resumed"
     assert event.data["preserved_nodes"] == ["evidence"]
     assert event.data["requeued_nodes"] == ["clinical", "report"]
+    persisted = await store.get_run(run.id)
+    assert persisted is not None
+    assert persisted.status == RunStatus.QUEUED
+    assert persisted.attempt == 2
+    assert persisted.plan[0].status == NodeStatus.PENDING
+    assert persisted.plan[1].status == NodeStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_stale_worker_cannot_overwrite_cancelled_terminal_state(tmp_path):
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    running = RunRecord(
+        user_id=7,
+        status=RunStatus.RUNNING,
+        input=RunInput(query="并发取消测试"),
+        plugin=plugin_registry.get("core"),
+    )
+    await store.create_run(running)
+    stale_worker = running.model_copy(deep=True)
+    cancelled = await store.get_run(running.id)
+    assert cancelled is not None
+    cancelled.status = RunStatus.CANCELLED
+    assert await store.save_run(cancelled)
+
+    stale_worker.status = RunStatus.COMPLETED
+    stale_worker.answer = "旧 worker 的迟到结果"
+    assert not await store.save_run(stale_worker)
+    persisted = await store.get_run(running.id)
+    assert persisted is not None
+    assert persisted.status == RunStatus.CANCELLED
+    assert persisted.answer is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_is_unique_per_attempt_not_per_run(tmp_path):
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    run = RunRecord(
+        user_id=7,
+        status=RunStatus.FAILED,
+        input=RunInput(query="重试后再次失败"),
+        plugin=plugin_registry.get("core"),
+    )
+    await store.create_run(run)
+    await store.append_event(RunEvent(
+        run_id=run.id,
+        trace_id=run.trace_id,
+        type="run.failed",
+        status=RunStatus.FAILED,
+        public_summary="第一次失败",
+        data={"attempt": 1},
+    ))
+    run.attempt = 2
+    run.status = RunStatus.QUEUED
+    assert await store.save_run(run, allow_resume=True)
+    run.status = RunStatus.FAILED
+    assert await store.save_run(run)
+    await store.append_event(RunEvent(
+        run_id=run.id,
+        trace_id=run.trace_id,
+        type="run.failed",
+        status=RunStatus.FAILED,
+        public_summary="第二次失败",
+        data={"attempt": 2},
+    ))
+
+    failures = [
+        event for event in await store.get_events(run.id)
+        if event.type == "run.failed"
+    ]
+    assert [event.data["attempt"] for event in failures] == [1, 2]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status",
+    [RunStatus.QUEUED, RunStatus.RUNNING, RunStatus.WAITING],
+)
+async def test_resume_rejects_nonrecoverable_states(tmp_path, status):
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    run = RunRecord(
+        user_id=7,
+        status=status,
+        input=RunInput(query="错误状态恢复"),
+        plugin=plugin_registry.get("core"),
+    )
+    await store.create_run(run)
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: FakeRunner(),
+    )
+    orchestrator._spawn = lambda run_id: None
+
+    with pytest.raises(ValueError, match="只有失败、已停止或服务中断"):
+        await orchestrator.resume(run.id, 7)
 
 
 @pytest.mark.asyncio
@@ -735,6 +1245,53 @@ async def test_localizer_waits_for_image_and_continues_after_input(tmp_path):
     current = await wait_for_terminal(store, run.id)
     assert current.status == RunStatus.COMPLETED
     assert any(node.id == "imaging" for node in current.plan)
+
+
+@pytest.mark.asyncio
+async def test_supplemental_input_rechecks_red_flags_before_execution(tmp_path):
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: FakeRunner(),
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="请定位病灶", plugin_id="lesion_localizer"),
+    )
+    image = tmp_path / "urgent.png"
+    image.write_bytes(b"image")
+    attachment = AttachmentRecord(
+        user_id=7,
+        original_filename="urgent.png",
+        stored_path=str(image),
+        mime_type="image/png",
+        size=5,
+        checksum="urgent",
+        kind="image",
+    )
+    await store.save_attachment(attachment)
+    orchestrator._spawn = lambda run_id: None
+
+    resumed = await orchestrator.provide_input(
+        run.id,
+        7,
+        "清洁剂刚溅进右眼，现在很痛并且看东西模糊",
+        [attachment.id],
+    )
+
+    assert resumed.risk_level == RiskLevel.EMERGENCY
+    assert resumed.clinical_state.red_flags
+    events = await store.get_events(run.id)
+    safety_sequence = next(
+        event.sequence for event in events if event.type == "safety.alert"
+    )
+    plan_sequence = next(
+        event.sequence for event in events if event.type == "plan.updated"
+    )
+    assert safety_sequence < plan_sequence
 
 
 @pytest.mark.asyncio
@@ -850,6 +1407,12 @@ async def test_restart_marks_running_run_interrupted_and_resume_requeues_node(tm
     assert interrupted and interrupted.status == RunStatus.INTERRUPTED
     assert interrupted.plan[0].status == NodeStatus.PENDING
     assert any(event.type == "run.interrupted" for event in await store.get_events(run.id))
+
+    resumed = await orchestrator.resume(run.id, 7)
+    assert resumed.status == RunStatus.QUEUED
+    completed = await wait_for_terminal(store, run.id)
+    assert completed.status == RunStatus.COMPLETED
+    assert completed.answer
 
 
 @pytest.mark.asyncio

@@ -114,6 +114,38 @@ async def test_personal_provider_keys_are_encrypted_and_resolved(tmp_path):
     assert resolved.main_model_key.get_secret_value() == "personal-secret-key"
 
 
+@pytest.mark.asyncio
+async def test_personal_provider_rejects_local_and_plain_http_ssrf_targets(tmp_path):
+    config = Settings(
+        _env_file=None,
+        ENVIRONMENT="test",
+        JWT_SECRET_KEY=SecretStr("test-encryption-secret"),
+        RUNTIME_STATE_DIR=str(tmp_path / "runs"),
+        ARTIFACT_DIR=str(tmp_path / "artifacts"),
+        ATTACHMENT_DIR=str(tmp_path / "attachments"),
+    )
+    runtime = RuntimeStore(config)
+    providers = ProviderConfigStore(runtime, config)
+    defaults = await providers.public_config(7)
+    incoming = {
+        provider: {"use_default": True}
+        for provider in defaults["providers"]
+    }
+    incoming["agent"] = {
+        "use_default": False,
+        "url": "http://127.0.0.1:8000/v1",
+        "model": "private-model",
+        "api_key": "secret",
+    }
+
+    with pytest.raises(ValueError, match="HTTPS"):
+        await providers.save(7, ProviderConfigInput(providers=incoming))
+
+    incoming["agent"]["url"] = "https://[::1]/v1"
+    with pytest.raises(ValueError, match="本机、内网或保留地址"):
+        await providers.save(7, ProviderConfigInput(providers=incoming))
+
+
 def test_document_exports_have_expected_file_signatures():
     content = "# 检查摘要\n\n视神经乳头改变，建议结合眼压与视野。"
     assert render_pdf(content).startswith(b"%PDF")

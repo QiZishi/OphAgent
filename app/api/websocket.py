@@ -8,6 +8,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlmodel import Session
 
 from app.auth.security import get_current_user_from_ws
+from app.db.crud import get_conversation_by_id
 from app.db.database import engine
 from app.domain.models import RunInput
 
@@ -84,12 +85,20 @@ async def websocket_chat_compatibility(websocket: WebSocket):
                     },
                 )
                 continue
+            conversation_id = request.get("conversation_id")
+            if conversation_id is not None:
+                conversation = get_conversation_by_id(session, int(conversation_id))
+                if conversation is None or conversation.user_id != user.id:
+                    await websocket.send_json(
+                        {"type": "error", "message": "会话不存在"},
+                    )
+                    continue
             run = await websocket.app.state.orchestrator.create(
                 int(user.id),
                 RunInput(
                     query=query,
                     plugin_id=request.get("plugin_id") or request.get("agent_mode") or "aux_diagnosis",
-                    conversation_id=request.get("conversation_id"),
+                    conversation_id=conversation_id,
                     attachment_ids=request.get("attachment_ids") or [],
                 ),
             )

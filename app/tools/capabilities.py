@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import mimetypes
+import re
 from typing import Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
@@ -30,6 +31,7 @@ class ToolResult(BaseModel):
 
 class ImageAnalysisRequest(BaseModel):
     image_paths: list[str] = Field(min_length=1, max_length=8)
+    image_ids: list[str] = Field(default_factory=list, max_length=8)
     question: str = Field(min_length=1, max_length=10_000)
     request_regions: bool = False
 
@@ -64,7 +66,9 @@ class CapabilityClients:
         self.retriever = retriever or HybridKnowledgeRetriever(config)
         self.http = http_client or httpx.AsyncClient(
             timeout=httpx.Timeout(config.REQUEST_TIMEOUT_SECONDS),
-            follow_redirects=True,
+            # Provider APIs should use canonical endpoints. Arbitrary redirects
+            # can bypass endpoint validation and create an SSRF redirect chain.
+            follow_redirects=False,
         )
         self._owns_http = http_client is None
         self.health: dict[str, str] = {}
@@ -126,12 +130,28 @@ class CapabilityClients:
             raise CapabilityUnavailable("sub_model", "多模态子模型未完整配置")
 
         content: list[dict[str, Any]] = [{"type": "text", "text": request.question}]
-        for raw_path in request.image_paths:
+        image_ids = request.image_ids or [
+            f"image_{index}"
+            for index in range(1, len(request.image_paths) + 1)
+        ]
+        if len(image_ids) != len(request.image_paths):
+            raise ValueError("image_ids 必须与 image_paths 一一对应")
+        for raw_path, image_id in zip(
+            request.image_paths,
+            image_ids,
+            strict=True,
+        ):
             path = self.config.resolve_path(raw_path)
             if not path.is_file():
                 raise CapabilityUnavailable("medical_image_analysis", f"影像文件不存在：{raw_path}")
             mime = mimetypes.guess_type(path.name)[0] or "image/jpeg"
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            content.append(
+                {
+                    "type": "text",
+                    "text": f"下一张影像的唯一标识为 IMAGE_ID={image_id}",
+                },
+            )
             content.append(
                 {
                     "type": "image_url",
@@ -143,7 +163,8 @@ class CapabilityClients:
         if request.request_regions:
             region_contract = (
                 "如且仅如你能够从图像中可靠定位，请在 JSON 的 regions 数组给出"
-                " label,x,y,width,height,coordinate_space,confidence；否则返回空数组。"
+                " image_id,label,x,y,width,height,coordinate_space,confidence；"
+                "image_id 必须使用对应输入影像前声明的 IMAGE_ID；否则返回空数组。"
                 "禁止猜测坐标或生成热图。"
             )
         prompt = (
@@ -173,7 +194,13 @@ class CapabilityClients:
         valid_regions: list[dict[str, Any]] = []
         for region in parsed.get("regions", []):
             try:
-                valid_regions.append(ImageRegion.model_validate(region).model_dump())
+                candidate = dict(region)
+                if len(image_ids) == 1 and not candidate.get("image_id"):
+                    candidate["image_id"] = image_ids[0]
+                validated = ImageRegion.model_validate(candidate)
+                if validated.image_id not in image_ids:
+                    continue
+                valid_regions.append(validated.model_dump())
             except ValueError:
                 continue
         parsed["regions"] = valid_regions
@@ -440,6 +467,26 @@ class CapabilityClients:
                 "mime_type": response.headers.get("content-type", "audio/mpeg").split(";", 1)[0],
             },
         )
+
+    @staticmethod
+    def canonicalize_citations(answer: str, evidence: list[EvidenceItem]) -> str:
+        """Expand only unambiguous evidence prefixes emitted by a provider.
+
+        Some OpenAI-compatible models shorten long opaque IDs even when asked
+        to copy them. A prefix is safe to repair only when it contains at
+        least eight hexadecimal characters and maps to exactly one evidence
+        item; unknown or ambiguous markers remain invalid.
+        """
+        known = {item.id for item in evidence}
+
+        def replace(match):
+            marker = match.group(1)
+            if marker in known or len(marker.removeprefix("ev_")) < 8:
+                return match.group(0)
+            matches = [identifier for identifier in known if identifier.startswith(marker)]
+            return f"[{matches[0]}]" if len(matches) == 1 else match.group(0)
+
+        return re.sub(r"\[(ev_[0-9a-f]+)\]", replace, answer)
 
     @staticmethod
     def validate_citations(answer: str, evidence: list[EvidenceItem]) -> ToolResult:

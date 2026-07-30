@@ -21,8 +21,13 @@ def create_db_and_tables():
         }
         if "role" not in user_columns:
             connection.exec_driver_sql(
-                "ALTER TABLE user ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'patient'",
+                "ALTER TABLE user ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT 'user'",
             )
+        # Historical labels did not represent product permissions. The
+        # prototype exposes the same user and management features to everyone.
+        connection.exec_driver_sql(
+            "UPDATE user SET role = 'user'",
+        )
         conversation_columns = {
             row[1] for row in connection.exec_driver_sql("PRAGMA table_info(conversation)").fetchall()
         }
