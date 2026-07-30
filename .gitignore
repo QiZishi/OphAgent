@@ -64,3 +64,8 @@ update_readme.ps1
 # GitHub Copilot instructions
 .github/copilot-instructions.md
 
+
+# Local-only documentation and project overview
+/docs/*
+!/docs/.gitkeep
+/OphVLM-R1项目总览.md
