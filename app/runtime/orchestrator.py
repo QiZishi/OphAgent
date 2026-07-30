@@ -36,6 +36,7 @@ from app.plugins.registry import PluginRegistry, plugin_registry
 from app.runtime.agents import AgentRunner, AgentScopeRunner, parse_json_object
 from app.runtime.context import ConversationContextManager, ConversationContextSnapshot
 from app.runtime.errors import BudgetExceeded, CapabilityUnavailable, RunCancelled
+from app.runtime.governance import bounded_preference_context
 from app.runtime.planning import build_plan
 from app.runtime.routing import is_contextual_follow_up, route_task
 from app.runtime.safety import apply_red_flag_gate, emergency_banner
@@ -1445,9 +1446,9 @@ class RunOrchestrator:
             answer += "\n\n> 本次未检索到足够的可追踪证据，系统没有用模型常识补造来源。"
         return {"answer": answer, "citation_validation": validation.data}
 
-    async def _confirmed_preferences(self, run: RunRecord) -> list[dict[str, str]]:
+    async def _confirmed_preferences(self, run: RunRecord) -> dict[str, Any]:
         if self.memory_store is None:
-            return []
+            return bounded_preference_context([])
         memories = await self.memory_store.search(
             run.user_id,
             run.input.query,
@@ -1468,7 +1469,7 @@ class RunOrchestrator:
                     ],
                 },
             )
-        return [
+        records = [
             {
                 "category": item.category,
                 "content": item.content,
@@ -1476,6 +1477,7 @@ class RunOrchestrator:
             }
             for item in memories
         ]
+        return bounded_preference_context(records)
 
     @staticmethod
     def _completed_context(run: RunRecord) -> dict[str, Any]:

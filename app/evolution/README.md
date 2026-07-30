@@ -1,6 +1,6 @@
 # Offline Evolution
 
-本模块包含两部分：`continuous.py` 在线记录去内容化结果与反馈，`harness.py` 离线负责候选隔离、不可变评测记录、确定性配对门禁、人工审批、release ref 与回滚。
+本模块包含两部分：`continuous.py` 在线记录去内容化结果与反馈，`harness.py` 离线负责候选隔离、不可变评测记录、确定性配对门禁、人工审批、release ref 与回滚。`tracks.py` 将偏好/策略类更新与安全、业务和 Harness 控制面分轨；混轨候选直接拒绝，不可变轨即使关闭普通候选审批也必须经过可信人工审批。
 
 在线环节不保存 query、answer、附件、证据正文、用户 ID 或临床字段。它只允许对重复获得正反馈的、已经确认的非临床偏好做默认最高 +15% 的 Bayesian-smoothed 召回增益；临床病史、用药和过敏不按粗粒度回答反馈重排，负反馈也不会降低任何 Memory 的权重。系统不能自动确认、改写、删除或屏蔽医疗事实。重复 Skill 负反馈、Memory 候选拒绝、召回负反馈和技术错误只会生成 `ready_for_offline_evaluation` 候选，不会在线改写代码、Prompt 或 `SKILL.md`。
 
@@ -21,3 +21,4 @@ sealed-test 必须位于仓库与候选 worktree 之外，并提供 `manifest.js
 本机可用 `scripts/install_official_evolution.sh` 从 `medical_agent_hust/evolution/upstream` 的固定官方源码安装；未安装时状态为 `unavailable`，不会启用同名简化优化器。可选依赖见 `requirements-evolution.txt`。
 
 设计与研究依据见 [`docs/SELF_EVOLUTION_HARNESS_RESEARCH.md`](../../docs/SELF_EVOLUTION_HARNESS_RESEARCH.md)。
+其他 Agent 系统的审计与实施步骤见 [`docs/DUAL_TRACK_EVOLUTION_GUIDE.md`](../../docs/DUAL_TRACK_EVOLUTION_GUIDE.md)。

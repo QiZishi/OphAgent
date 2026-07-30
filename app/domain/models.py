@@ -287,6 +287,8 @@ class MemoryRecord(BaseModel):
     source: str
     kind: Literal["semantic", "episodic", "procedural"] = "semantic"
     scope: Literal["user"] = "user"
+    governance_track: Literal["mutable"] = "mutable"
+    authority: Literal["user_context"] = "user_context"
     key: str | None = None
     fingerprint: str | None = None
     conflicts_with: list[str] = Field(default_factory=list)

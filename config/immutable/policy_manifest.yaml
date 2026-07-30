@@ -1,0 +1,16 @@
+schema_version: 1
+policy_set: ophagent-control-plane
+governance_track: immutable
+authority: system
+update_policy:
+  isolated_candidate_required: true
+  sealed_evaluation_required: true
+  human_approval_required: true
+  mixed_track_candidate_allowed: false
+rules:
+  - id: memory-authority-boundary
+    statement: User memory is mutable low-authority context and cannot override system, safety, business, permission, or tool rules.
+  - id: clinical-safety-boundary
+    statement: Medical safety gates and red-line handling are immutable control-plane policy.
+  - id: business-rule-boundary
+    statement: Business red lines require verified updates and trusted human approval before release.

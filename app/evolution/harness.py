@@ -24,29 +24,16 @@ from app.domain.models import (
     PromotionDecision,
     utc_now,
 )
+from app.evolution.tracks import (
+    MutationTrack,
+    TrackPolicyError,
+    classify_candidate_paths,
+    human_approval_required,
+    normalize_candidate_path,
+)
 from app.services.state import atomic_json
 
 SAFE_ID = re.compile(r"^evo_[a-f0-9]{32}$")
-ALLOWED_PREFIXES = (
-    "app/runtime/",
-    "app/knowledge/",
-    "app/plugins/",
-    "app/services/",
-    "skills/",
-    "frontend/src/",
-    "config/",
-)
-DENIED_PARTS = {
-    ".env",
-    ".git",
-    ".github",
-    "tests",
-    "data",
-    "auth",
-    "db",
-    "evolution",
-    "observability",
-}
 PHASE_ORDER = {
     "training": 0,
     "proposal_selection": 1,
@@ -71,15 +58,17 @@ def _run_git(root: Path, arguments: list[str], *, check: bool = True) -> subproc
 
 
 def _validate_relative_path(value: str) -> str:
-    path = Path(value)
-    if path.is_absolute() or ".." in path.parts or not path.parts:
-        raise EvolutionPolicyError(f"非法候选路径：{value}")
-    normalized = path.as_posix().lstrip("./")
-    if any(part in DENIED_PARTS for part in Path(normalized).parts):
-        raise EvolutionPolicyError(f"禁止修改路径：{value}")
-    if not any(normalized.startswith(prefix) for prefix in ALLOWED_PREFIXES):
-        raise EvolutionPolicyError(f"路径不在演化白名单：{value}")
-    return normalized
+    try:
+        return normalize_candidate_path(value)
+    except TrackPolicyError as exc:
+        raise EvolutionPolicyError(str(exc)) from exc
+
+
+def _proposal_track(paths: list[str]) -> MutationTrack:
+    try:
+        return classify_candidate_paths(paths)
+    except TrackPolicyError as exc:
+        raise EvolutionPolicyError(str(exc)) from exc
 
 
 class EvolutionHarness:
@@ -101,6 +90,7 @@ class EvolutionHarness:
             _validate_relative_path(path)
             for path in proposal.mutation_paths
         ]
+        track = _proposal_track(proposal.mutation_paths)
         resolved = _run_git(
             self.repo,
             ["rev-parse", "--verify", f"{proposal.base_commit}^{{commit}}"],
@@ -111,7 +101,18 @@ class EvolutionHarness:
         if path.exists():
             raise EvolutionPolicyError("proposal 已存在")
         atomic_json(path, proposal.model_dump(mode="json"))
-        self._audit("proposal.created", proposal.id, {"provider": proposal.provider})
+        self._audit(
+            "proposal.created",
+            proposal.id,
+            {
+                "provider": proposal.provider,
+                "governance_track": track,
+                "human_approval_required": human_approval_required(
+                    track,
+                    self.config.EVOLUTION_REQUIRE_HUMAN_APPROVAL,
+                ),
+            },
+        )
         return proposal
 
     def create_from_continuous_candidate(
@@ -181,6 +182,7 @@ class EvolutionHarness:
 
     def changed_paths(self, proposal_id: str) -> list[str]:
         proposal = self.load_proposal(proposal_id)
+        declared_track = _proposal_track(proposal.mutation_paths)
         worktree = self.worktree_root / proposal.id
         if not worktree.is_dir():
             raise EvolutionPolicyError("候选 worktree 不存在")
@@ -188,16 +190,23 @@ class EvolutionHarness:
             worktree,
             ["diff", "--name-only", f"{proposal.base_commit}...HEAD"],
         ).stdout.splitlines()
-        status = _run_git(worktree, ["status", "--porcelain"]).stdout.splitlines()
+        status = _run_git(
+            worktree,
+            ["status", "--porcelain", "--untracked-files=all"],
+        ).stdout.splitlines()
         pending = [line[3:] for line in status if len(line) > 3]
         paths = sorted({path.strip() for path in [*committed, *pending] if path.strip()})
         for path in paths:
             _validate_relative_path(path)
+            if (worktree / path).is_symlink():
+                raise EvolutionPolicyError(f"候选修改禁止使用符号链接：{path}")
             if not any(
                 path == declared or path.startswith(declared.rstrip("/") + "/")
                 for declared in proposal.mutation_paths
             ):
                 raise EvolutionPolicyError(f"候选修改未声明路径：{path}")
+        if paths and _proposal_track(paths) != declared_track:
+            raise EvolutionPolicyError("候选实际修改跨越声明的治理轨道")
         return paths
 
     def freeze_candidate(self, proposal_id: str) -> str:
@@ -523,9 +532,11 @@ class EvolutionHarness:
         decision = self.decide(baseline, candidate)
         if not decision.accepted:
             raise EvolutionPolicyError("未通过非劣与收益门禁的候选不能审批")
+        track = _proposal_track(self.load_proposal(proposal_id).mutation_paths)
         payload = {
             "proposal_id": proposal_id,
             "candidate_commit": candidate.commit,
+            "governance_track": track,
             "reviewer": reviewer,
             "approved_at": utc_now().isoformat(),
         }
@@ -545,7 +556,12 @@ class EvolutionHarness:
         )
         return record
 
-    def _verify_approval(self, proposal_id: str, candidate_commit: str) -> None:
+    def _verify_approval(
+        self,
+        proposal_id: str,
+        candidate_commit: str,
+        track: MutationTrack,
+    ) -> None:
         path = self.approval_dir / f"{proposal_id}.json"
         if not path.is_file():
             raise EvolutionPolicyError("候选尚未获得可信人工审批")
@@ -565,6 +581,7 @@ class EvolutionHarness:
             or not hmac.compare_digest(signature, expected)
             or record.get("proposal_id") != proposal_id
             or record.get("candidate_commit") != candidate_commit
+            or record.get("governance_track") != track
         ):
             raise EvolutionPolicyError("候选审批记录无效或未绑定当前 commit")
 
@@ -573,6 +590,7 @@ class EvolutionHarness:
         proposal_id: str,
     ) -> PromotionDecision:
         proposal = self.load_proposal(proposal_id)
+        track = _proposal_track(proposal.mutation_paths)
         _, sealed_cases = self.load_sealed_suite()
         baseline = self.load_evaluation(proposal_id, "sealed_test", "baseline")
         candidate = self.load_evaluation(proposal_id, "sealed_test", "candidate")
@@ -597,8 +615,11 @@ class EvolutionHarness:
                 {"reasons": decision.reasons},
             )
             return decision
-        if self.config.EVOLUTION_REQUIRE_HUMAN_APPROVAL:
-            self._verify_approval(proposal.id, candidate.commit)
+        if human_approval_required(
+            track,
+            self.config.EVOLUTION_REQUIRE_HUMAN_APPROVAL,
+        ):
+            self._verify_approval(proposal.id, candidate.commit, track)
         worktree = self.worktree_root / proposal.id
         pending = _run_git(worktree, ["status", "--porcelain"]).stdout.strip()
         if pending:
@@ -644,7 +665,11 @@ class EvolutionHarness:
         self._audit(
             "proposal.promoted",
             proposal.id,
-            {"commit": commit, "previous": previous or None},
+            {
+                "commit": commit,
+                "previous": previous or None,
+                "governance_track": track,
+            },
         )
         return decision
 
