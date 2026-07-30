@@ -117,6 +117,23 @@ class ClinicalState(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class NodeContextCheckpoint(BaseModel):
+    """Content-free metadata proving which context a node consumed."""
+
+    id: str
+    node_id: str
+    attempt: int = Field(default=1, ge=1)
+    source_nodes: list[str] = Field(default_factory=list)
+    source_hash: str
+    tokens_before: int = Field(default=0, ge=0)
+    tokens_after: int = Field(default=0, ge=0)
+    token_limit: int = Field(default=0, ge=0)
+    compressed: bool = False
+    compression_reason: str | None = None
+    preserved_fields: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class PlanNode(BaseModel):
     id: str
     title: str
@@ -128,6 +145,9 @@ class PlanNode(BaseModel):
     input: dict[str, Any] = Field(default_factory=dict)
     output: dict[str, Any] | None = None
     error_code: str | None = None
+    attempt: int = Field(default=0, ge=0)
+    context_checkpoint: NodeContextCheckpoint | None = None
+    recovery_feedback: list[dict[str, Any]] = Field(default_factory=list)
     started_at: datetime | None = None
     completed_at: datetime | None = None
 

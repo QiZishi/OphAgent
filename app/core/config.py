@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     CONTEXT_MAX_INPUT_TOKENS: int = 3_600
     CONTEXT_RECENT_TURNS: int = 4
     CONTEXT_MAX_SOURCE_TURNS: int = 100
+    CONTEXT_COMPRESSION_TRIGGER_RATIO: float = 0.82
 
     JWT_SECRET_KEY: SecretStr = SecretStr("")
     JWT_ALGORITHM: str = "HS256"

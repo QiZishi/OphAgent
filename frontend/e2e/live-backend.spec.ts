@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("真实后端注册、项目创建、资源导航和语音入口可用", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "mobile", "桌面端真实工作流验收");
+test("真实后端注册、项目创建、资源导航和语音入口可用", { tag: "@desktop" }, async ({ page }, testInfo) => {
   const suffix = `${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
   const username = `gui_${suffix}`;
   const projectName = `GUI 随访项目 ${suffix.slice(-6)}`;

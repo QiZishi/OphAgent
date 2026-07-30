@@ -50,9 +50,24 @@ class FakeRunner:
         else:
             evidence_ids = re.findall(r'"id": "(ev_[0-9a-f]+)"', prompt)
             citation = f" [{evidence_ids[0]}]" if evidence_ids else ""
+            ophthalmic_anchors = (
+                "青光眼",
+                "白内障",
+                "视网膜",
+                "黄斑",
+                "角膜",
+                "结膜",
+                "干眼",
+                "近视",
+                "视神经",
+                "眼压",
+                "飞蚊",
+                "闪光",
+            )
+            topic = next((term for term in ophthalmic_anchors if term in prompt), "")
             text = (
                 "# 研究级眼科评估\n\n"
-                f"当前信息只能形成待复核评估，不能确诊。{citation}\n\n"
+                f"{topic}相关信息只能形成待复核评估，不能确诊。{citation}\n\n"
                 "## 不确定性与下一步\n\n建议补充线下眼科检查。\n\n"
                 "> 本系统用于研究级诊疗增强，不能替代医生诊断。"
             )

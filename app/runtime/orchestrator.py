@@ -35,7 +35,12 @@ from app.evolution.continuous import ContinuousEvolutionController
 from app.observability.tracing import safe_span
 from app.plugins.registry import PluginRegistry, plugin_registry
 from app.runtime.agents import AgentRunner, AgentScopeRunner, parse_json_object
-from app.runtime.context import ConversationContextManager, ConversationContextSnapshot
+from app.runtime.context import (
+    ConversationContextManager,
+    ConversationContextSnapshot,
+    ExecutionContextManager,
+    NodeExecutionContext,
+)
 from app.runtime.errors import BudgetExceeded, CapabilityUnavailable, RunCancelled
 from app.runtime.governance import bounded_preference_context
 from app.runtime.planning import build_plan
@@ -54,6 +59,69 @@ from app.tools.capabilities import (
 )
 
 RunnerFactory = Callable[[CapabilityClients], AgentRunner]
+
+
+class TerminalOutputError(RuntimeError):
+    """The generated terminal answer did not satisfy its public contract."""
+
+    def __init__(
+        self,
+        issues: list[str],
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        self.issues = tuple(issues or ["unknown"])
+        self.details = details or {}
+        super().__init__(f"输出契约未通过：{','.join(self.issues)}")
+
+
+_TERMINAL_RETRY_GUIDANCE = {
+    "empty_answer": "上一版没有可发布正文；必须生成完整回答。",
+    "query_anchor_missing": "上一版漏答了用户问题中的核心眼科主题；开头直接回应该主题。",
+    "citation_coverage_failed": (
+        "上一版的医学主张没有充分绑定检索证据；每个医学事实段落都要紧跟"
+        "与该主张匹配的已有 [ev_xxx]，不得新增或猜测引用编号。"
+    ),
+    "image_context_contradiction": (
+        "用户已经上传影像，上一版却声称没有图像；必须基于已完成的影像观察作答。"
+    ),
+    "missing_empty_localization_disclosure": (
+        "定位组件没有返回通过校验的坐标；必须明确说明未形成经校验坐标，"
+        "不得把关注区写成已标注病灶。"
+    ),
+}
+
+
+def _terminal_retry_feedback(exc: Exception) -> dict[str, Any]:
+    """Return bounded, actionable feedback without leaking exception payloads."""
+    if isinstance(exc, TerminalOutputError):
+        corrections = [
+            _TERMINAL_RETRY_GUIDANCE.get(
+                issue,
+                f"修正输出契约问题：{issue}。",
+            )
+            for issue in exc.issues
+        ]
+        if "citation_coverage_failed" in exc.issues:
+            corrections.append(
+                "把医学事实压缩为至多 3 个短段落；删除没有证据支撑的段落，"
+                "其余每段结尾至少放一个与该段主张匹配的现有 [ev_xxx]。"
+            )
+        return {
+            "failed_stage": "output_contract_validation",
+            "error_type": type(exc).__name__,
+            "issues": list(exc.issues),
+            "validation_metrics": exc.details,
+            "required_corrections": corrections,
+        }
+    return {
+        "failed_stage": "safety_or_citation_postprocessing",
+        "error_type": type(exc).__name__,
+        "issues": ["postprocessing_exception"],
+        "required_corrections": [
+            "上一版在安全或引用后处理阶段连续失败；重新生成完整正文，"
+            "使用更简单、明确的句子逐条绑定已有证据，并避免复杂或含混的引用结构。"
+        ],
+    }
 
 
 class RunOrchestrator:
@@ -79,12 +147,21 @@ class RunOrchestrator:
         self.provider_config_store = provider_config_store
         self.evolution_controller = evolution_controller
         self.context_manager = ConversationContextManager(store, config)
+        self.execution_context_manager = ExecutionContextManager(config)
         self._client_context: ContextVar[CapabilityClients] = ContextVar(
             "ophagent_active_clients",
             default=clients,
         )
         self._conversation_context: ContextVar[ConversationContextSnapshot | None] = ContextVar(
             "ophagent_conversation_context",
+            default=None,
+        )
+        self._node_context: ContextVar[NodeExecutionContext | None] = ContextVar(
+            "ophagent_node_context",
+            default=None,
+        )
+        self._active_node_id: ContextVar[str | None] = ContextVar(
+            "ophagent_active_node_id",
             default=None,
         )
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -152,8 +229,8 @@ class RunOrchestrator:
         route = route_task(run_input, risk, previous_route)
         budget_limits = {
             TaskComplexity.QUICK: (1, 2_000, 15, 500),
-            TaskComplexity.STANDARD: (3, 12_000, 60, 1_200),
-            TaskComplexity.DEEP: (8, 32_000, 300, 2_000),
+            TaskComplexity.STANDARD: (4, 20_000, 120, 2_400),
+            TaskComplexity.DEEP: (8, 40_000, 300, 2_400),
         }
         calls, tokens, seconds, reserve = budget_limits[route.complexity]
         budget = RunBudget(
@@ -265,6 +342,18 @@ class RunOrchestrator:
                 if node.status == NodeStatus.RUNNING:
                     node.status = NodeStatus.PENDING
                     node.started_at = None
+                    node.recovery_feedback = [
+                        *node.recovery_feedback[-2:],
+                        {
+                            "failed_stage": node.id,
+                            "error_type": "WorkerInterrupted",
+                            "issues": ["worker_restarted"],
+                            "required_corrections": [
+                                "从该节点检查点重新执行；已完成依赖保持不变，"
+                                "不得假定中断前的未持久化输出已经完成。"
+                            ],
+                        },
+                    ]
             await self.store.save_run(run)
             await self._event(
                 run,
@@ -302,11 +391,54 @@ class RunOrchestrator:
         if run.status in {RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_WARNINGS}:
             return run
         self._cancelled.discard(run_id)
+        requeued = {
+            node.id
+            for node in run.plan
+            if node.status
+            in {
+                NodeStatus.PENDING,
+                NodeStatus.RUNNING,
+                NodeStatus.CANCELLED,
+                NodeStatus.FAILED,
+            }
+        }
+        changed = True
+        while changed:
+            changed = False
+            for node in run.plan:
+                if node.id not in requeued and any(
+                    dependency in requeued for dependency in node.depends_on
+                ):
+                    requeued.add(node.id)
+                    changed = True
+        preserved = [
+            node.id
+            for node in run.plan
+            if node.status == NodeStatus.COMPLETED and node.id not in requeued
+        ]
         for node in run.plan:
-            if node.status in {NodeStatus.RUNNING, NodeStatus.CANCELLED, NodeStatus.FAILED}:
+            if node.id in requeued or (
+                node.status == NodeStatus.SKIPPED
+                and any(dependency in requeued for dependency in node.depends_on)
+            ):
+                if node.status == NodeStatus.CANCELLED:
+                    node.recovery_feedback = [
+                        *node.recovery_feedback[-2:],
+                        {
+                            "failed_stage": node.id,
+                            "error_type": "UserInterrupted",
+                            "issues": ["execution_interrupted_by_user"],
+                            "required_corrections": [
+                                "用户已要求恢复；从节点检查点重新执行，"
+                                "不要声称中断前未完成的输出已经完成。"
+                            ],
+                        },
+                    ]
                 node.status = NodeStatus.PENDING
                 node.error_code = None
                 node.output = None
+                node.started_at = None
+                node.completed_at = None
         run.attempt += 1
         if run.budget.prompt_tokens + run.budget.completion_tokens >= run.budget.max_tokens:
             run.budget.max_tokens = min(
@@ -318,10 +450,25 @@ class RunOrchestrator:
                 run.budget.max_model_calls + 1,
             )
         run.status = RunStatus.QUEUED
+        run.answer = None
         run.error_code = None
         run.error_message = None
         await self.store.save_run(run)
-        await self._event(run, "plan.updated", "任务已恢复，将继续未完成节点")
+        await self._event(
+            run,
+            "run.resumed",
+            (
+                f"任务已从检查点恢复：保留 {len(preserved)} 个已完成节点，"
+                f"重新执行 {len(requeued)} 个未完成或受影响节点"
+            ),
+            data={
+                "attempt": run.attempt,
+                "preserved_nodes": preserved,
+                "requeued_nodes": [
+                    node.id for node in run.plan if node.id in requeued
+                ],
+            },
+        )
         self._spawn(run_id)
         return run
 
@@ -407,8 +554,8 @@ class RunOrchestrator:
         run.route = route_task(run.input, run.risk_level)
         recalculated_limits = {
             TaskComplexity.QUICK: (1, 2_000, 15, 500),
-            TaskComplexity.STANDARD: (3, 12_000, 60, 1_200),
-            TaskComplexity.DEEP: (8, 32_000, 300, 2_000),
+            TaskComplexity.STANDARD: (4, 20_000, 120, 2_400),
+            TaskComplexity.DEEP: (8, 40_000, 300, 2_400),
         }
         calls, tokens, seconds, reserve = recalculated_limits[run.route.complexity]
         run.budget.max_model_calls = max(
@@ -723,9 +870,62 @@ class RunOrchestrator:
                 error_code=node.error_code,
             )
             return
+        previous_checkpoint = node.context_checkpoint
         node.status = NodeStatus.RUNNING
+        node.attempt += 1
         node.started_at = utc_now()
+        remaining_tokens = max(
+            256,
+            run.budget.max_tokens
+            - run.budget.prompt_tokens
+            - run.budget.completion_tokens
+            - self._role_output_reserve(node.agent),
+        )
+        node_context = self.execution_context_manager.build(
+            run,
+            node,
+            token_limit=min(
+                self.config.CONTEXT_MAX_INPUT_TOKENS,
+                remaining_tokens,
+            ),
+        )
+        node.context_checkpoint = node_context.checkpoint
         await self.store.save_run(run)
+        if previous_checkpoint is not None:
+            context_unchanged = (
+                previous_checkpoint.source_hash
+                == node.context_checkpoint.source_hash
+            )
+            await self._event(
+                run,
+                "context.restored",
+                (
+                    f"{node.title}已从步骤检查点恢复依赖上下文"
+                    if context_unchanged
+                    else f"{node.title}的依赖已变化，已重新构建上下文"
+                ),
+                data={
+                    "node_id": node.id,
+                    "previous_checkpoint_id": previous_checkpoint.id,
+                    "checkpoint_id": node.context_checkpoint.id,
+                    "source_context_unchanged": context_unchanged,
+                    "source_nodes": node.context_checkpoint.source_nodes,
+                },
+            )
+        if node.context_checkpoint.compressed:
+            await self._event(
+                run,
+                "context.compressed",
+                f"{node.title}执行前已提前压缩依赖上下文",
+                data={
+                    "node_id": node.id,
+                    "tokens_before": node.context_checkpoint.tokens_before,
+                    "tokens_after": node.context_checkpoint.tokens_after,
+                    "token_limit": node.context_checkpoint.token_limit,
+                    "source_nodes": node.context_checkpoint.source_nodes,
+                    "preserved_fields": node.context_checkpoint.preserved_fields,
+                },
+            )
         await self._event(
             run,
             "agent.started" if node.agent.endswith("Agent") else "tool.started",
@@ -733,6 +933,8 @@ class RunOrchestrator:
             data={"node_id": node.id, "agent": node.agent, "capability": node.capability},
         )
         started = time.monotonic()
+        node_context_token = self._node_context.set(node_context)
+        active_node_token = self._active_node_id.set(node.id)
         try:
             if node.id == "supervisor":
                 output = await self._supervisor(run, runner)
@@ -779,6 +981,17 @@ class RunOrchestrator:
             node.status = NodeStatus.FAILED if node.required else NodeStatus.SKIPPED
             node.error_code = exc.code
             node.output = {"status": "unavailable", "capability": exc.capability, "detail": exc.detail}
+            node.recovery_feedback = [
+                *node.recovery_feedback[-2:],
+                {
+                    "failed_stage": node.id,
+                    "error_type": type(exc).__name__,
+                    "issues": [exc.code],
+                    "required_corrections": [
+                        "恢复时重新调用该能力；若仍不可用，按节点是否必要决定跳过或停止。"
+                    ],
+                },
+            ]
             await self._event(
                 run,
                 "tool.failed",
@@ -790,6 +1003,10 @@ class RunOrchestrator:
             node.status = NodeStatus.FAILED
             node.error_code = getattr(exc, "code", "node_failed")
             node.output = {"status": "failed", "detail": str(exc)}
+            node.recovery_feedback = [
+                *node.recovery_feedback[-2:],
+                self._node_failure_feedback(node.id, exc),
+            ]
             await self._event(
                 run,
                 "tool.failed",
@@ -798,6 +1015,8 @@ class RunOrchestrator:
                 error_code=node.error_code,
             )
         finally:
+            self._active_node_id.reset(active_node_token)
+            self._node_context.reset(node_context_token)
             await self.store.save_run(run)
 
     async def _ask(
@@ -809,6 +1028,18 @@ class RunOrchestrator:
         *,
         stream: bool = False,
     ) -> str:
+        active_node_id = self._active_node_id.get()
+        active_node = next(
+            (item for item in run.plan if item.id == active_node_id),
+            None,
+        )
+        if active_node is not None and active_node.recovery_feedback:
+            prompt = (
+                "本节点此前执行未完成，必须先落实以下恢复反馈：\n"
+                f"{json.dumps(active_node.recovery_feedback[-3:], ensure_ascii=False)}"
+                "\n\n本次节点输入：\n"
+                f"{prompt}"
+            )
         conversation_context = self._conversation_context.get()
         if conversation_context is not None:
             role_limits = {
@@ -882,6 +1113,156 @@ class RunOrchestrator:
             )
         return reply.text
 
+    @staticmethod
+    def _role_output_reserve(role: str) -> int:
+        return {
+            "DirectAnswerAgent": 700,
+            "SupervisorAgent": 256,
+            "ClinicalReasoningAgent": 1_600,
+            "DifferentialAssessmentAgent": 1_600,
+            "OphthalmologySpecialistAgent": 900,
+            "CriticAgent": 900,
+            "AnswerSynthesizer": 1_800,
+            "ReportAgent": 2_400,
+        }.get(role.partition(":")[0], 1_500)
+
+    @staticmethod
+    def _node_failure_feedback(node_id: str, exc: Exception) -> dict[str, Any]:
+        if isinstance(exc, BudgetExceeded):
+            return {
+                "failed_stage": node_id,
+                "error_type": type(exc).__name__,
+                "issues": ["context_or_output_budget_exhausted"],
+                "required_corrections": [
+                    "恢复时使用已保存的依赖节点结果，先压缩冗余上下文，"
+                    "再用更短的结构化输出完成本节点。"
+                ],
+            }
+        return {
+            "failed_stage": node_id,
+            "error_type": type(exc).__name__,
+            "issues": [getattr(exc, "code", "node_execution_failed")],
+            "required_corrections": [
+                "从本节点检查点重新执行，保留已完成依赖，不沿用失败节点的未验证输出。"
+            ],
+        }
+
+    async def _retry_terminal_postprocessing(
+        self,
+        run: RunRecord,
+        raw_answer: str,
+        processor: Callable[[str], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Retry transient guardrail/citation code before regenerating text."""
+        attempts = max(2, min(self.config.MAX_RETRIES + 1, 3))
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            try:
+                return processor(raw_answer)
+            except Exception as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    break
+                await self._event(
+                    run,
+                    "guardrail.retrying",
+                    "输出后处理暂时失败，正在重试校验",
+                    data={
+                        "attempt": attempt + 1,
+                        "max_attempts": attempts,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                await asyncio.sleep(min(0.05 * 2 ** (attempt - 1), 0.2))
+        assert last_error is not None
+        raise last_error
+
+    async def _generate_terminal_with_recovery(
+        self,
+        run: RunRecord,
+        runner: AgentRunner,
+        *,
+        role: str,
+        prompt: str,
+        stream: bool,
+        processor: Callable[[str], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Regenerate a terminal node from its pre-step state after failures."""
+        attempts = max(2, min(self.config.MAX_RETRIES + 1, 3))
+        last_error: Exception | None = None
+        retry_prompt = prompt
+        for attempt in range(1, attempts + 1):
+            self._check_cancel(run)
+            try:
+                raw_answer = await self._ask(
+                    run,
+                    runner,
+                    role,
+                    retry_prompt,
+                    stream=stream,
+                )
+                result = await self._retry_terminal_postprocessing(
+                    run,
+                    raw_answer,
+                    processor,
+                )
+                validation = result.get("output_validation")
+                if isinstance(validation, dict) and not validation.get("valid", False):
+                    citation = result.get("citation_validation")
+                    citation_metrics = (
+                        {
+                            key: citation.get(key)
+                            for key in (
+                                "claim_paragraph_count",
+                                "cited_claim_paragraph_count",
+                                "claim_coverage",
+                                "unknown_citations",
+                            )
+                            if key in citation
+                        }
+                        if isinstance(citation, dict)
+                        else {}
+                    )
+                    raise TerminalOutputError(
+                        validation.get("issues") or ["unknown"],
+                        details={
+                            **citation_metrics,
+                            "missing_query_anchors": validation.get(
+                                "missing_query_anchors",
+                                [],
+                            ),
+                        },
+                    )
+                return result
+            except (asyncio.CancelledError, BudgetExceeded, RunCancelled):
+                raise
+            except Exception as exc:
+                last_error = exc
+                if attempt >= attempts:
+                    break
+                feedback = _terminal_retry_feedback(exc)
+                await self._event(
+                    run,
+                    "agent.retrying",
+                    "终端步骤未通过校验，已回滚并重新生成",
+                    data={
+                        "node_id": "report" if role == "ReportAgent" else "answer",
+                        "attempt": attempt + 1,
+                        "max_attempts": attempts,
+                        "error_type": type(exc).__name__,
+                        "failure_feedback": feedback,
+                    },
+                )
+                retry_prompt = (
+                    prompt
+                    + "\n\n上一次生成失败，下面是必须落实的结构化纠错反馈：\n"
+                    + json.dumps(feedback, ensure_ascii=False)
+                    + "\n请从该步骤开始前的输入上下文重新生成完整输出；"
+                    "逐项修正上述问题，不要沿用上一版失败正文，也不要新增上下文中不存在的事实。"
+                )
+        assert last_error is not None
+        raise last_error
+
     async def _answer(
         self,
         run: RunRecord,
@@ -897,29 +1278,37 @@ class RunOrchestrator:
                 "直接、简洁地回答。若问题超出眼科范围也可正常简短回答；"
                 "不得虚构医学来源，不要生成报告格式。"
             )
-            answer = await self._ask(run, runner, "DirectAnswerAgent", prompt, stream=stream)
-            answer = _moderate_unconfirmed_medical_language(answer, run.risk_level)
-            banner = emergency_banner(run.clinical_state)
-            if banner:
-                answer = banner + "\n\n" + answer
-            validation = self._client_context.get().validate_citations(answer, [])
-            output_validation = _validate_answer_output(
-                answer,
-                query=run.input.query,
-                evidence=[],
-                citation_validation=validation.data,
-            )
-            if not output_validation["valid"]:
-                raise ValueError(
-                    "快速回答未通过输出校验："
-                    + ",".join(output_validation["issues"])
+            def postprocess_quick(raw_answer: str) -> dict[str, Any]:
+                answer = _moderate_unconfirmed_medical_language(
+                    raw_answer,
+                    run.risk_level,
                 )
-            return {
-                "answer": answer,
-                "citation_validation": validation.data,
-                "output_validation": output_validation,
-            }
+                banner = emergency_banner(run.clinical_state)
+                if banner:
+                    answer = banner + "\n\n" + answer
+                validation = self._client_context.get().validate_citations(answer, [])
+                output_validation = _validate_answer_output(
+                    answer,
+                    query=run.input.query,
+                    evidence=[],
+                    citation_validation=validation.data,
+                )
+                return {
+                    "answer": answer,
+                    "citation_validation": validation.data,
+                    "output_validation": output_validation,
+                }
+
+            return await self._generate_terminal_with_recovery(
+                run,
+                runner,
+                role="DirectAnswerAgent",
+                prompt=prompt,
+                stream=stream,
+                processor=postprocess_quick,
+            )
         context = self._completed_context(run)
+        prompt_context = self._prompt_context(run)
         evidence_raw = (context.get("evidence") or {}).get("evidence", [])
         evidence = [EvidenceItem.model_validate(item) for item in evidence_raw]
         knowledge_query = bool(
@@ -942,7 +1331,7 @@ class RunOrchestrator:
             )
         else:
             specialist_context = {
-                key: value for key, value in context.items()
+                key: value for key, value in prompt_context.items()
                 if key.startswith("specialist_") or key == "draft"
             }
             prompt = (
@@ -951,13 +1340,13 @@ class RunOrchestrator:
                 f"已接收输入：影像 {len(run.input.image_paths)} 张、文档 {len(run.input.document_paths)} 份、音频 {len(run.input.audio_paths)} 段。\n"
                 f"本次专业插件：{json.dumps(run.route.selected_plugins if run.route else [], ensure_ascii=False)}\n"
                 f"ClinicalState：{_json_for_prompt(run.clinical_state.model_dump(mode='json'), 1_300, self.config.main_model_name)}\n"
-                f"影像观察：{_json_for_prompt(context.get('imaging'), 900, self.config.main_model_name)}\n"
-                f"结构化鉴别评估：{_json_for_prompt(context.get('assessment'), 1_200, self.config.main_model_name)}\n"
-                f"文档内容：{_json_for_prompt(context.get('documents'), 1_100, self.config.main_model_name)}\n"
-                f"音频转写：{_json_for_prompt(context.get('audio'), 500, self.config.main_model_name)}\n"
+                f"影像观察：{_json_for_prompt(prompt_context.get('imaging'), 900, self.config.main_model_name)}\n"
+                f"结构化鉴别评估：{_json_for_prompt(prompt_context.get('assessment'), 1_200, self.config.main_model_name)}\n"
+                f"文档内容：{_json_for_prompt(prompt_context.get('documents'), 1_100, self.config.main_model_name)}\n"
+                f"音频转写：{_json_for_prompt(prompt_context.get('audio'), 500, self.config.main_model_name)}\n"
                 f"检索证据：{json.dumps(evidence_for_prompt, ensure_ascii=False)}\n"
                 f"专科复核与候选稿：{_json_for_prompt(specialist_context, 1_400, self.config.main_model_name)}\n"
-                f"候选稿安全审查：{_json_for_prompt(context.get('critic'), 700, self.config.main_model_name)}\n"
+                f"候选稿安全审查：{_json_for_prompt(prompt_context.get('critic'), 700, self.config.main_model_name)}\n"
                 "先直接回应用户问题，再说明关键依据、未知项和下一步。"
                 "影像观察来自已接收的原始上传影像，不得声称未提供图像或仅基于文本。"
                 "如果请求病灶定位但影像观察的 regions 为空，必须明确没有形成通过校验的坐标，"
@@ -966,50 +1355,53 @@ class RunOrchestrator:
                 "仅在存在证据时使用对应 [ev_xxx]，不要另写重复来源清单或通用免责声明。"
             )
         should_stream = stream and not bool(run.route and run.route.selected_plugins)
-        answer = await self._ask(
+        localization_requested = bool(
+            run.route and "lesion_localizer" in run.route.selected_plugins
+        )
+        validated_region_count = len(
+            (context.get("imaging") or {}).get("regions") or []
+        )
+
+        def postprocess_answer(raw_answer: str) -> dict[str, Any]:
+            answer = (
+                _remove_knowledge_boilerplate(raw_answer)
+                if knowledge_query
+                else raw_answer
+            )
+            answer = _sanitize_public_image_context(
+                answer,
+                has_images=bool(run.input.image_paths),
+                localization_requested=localization_requested,
+                validated_region_count=validated_region_count,
+            )
+            answer = _moderate_unconfirmed_medical_language(answer, run.risk_level)
+            banner = emergency_banner(run.clinical_state)
+            if banner:
+                answer = banner + "\n\n" + answer
+            validation = self._client_context.get().validate_citations(answer, evidence)
+            output_validation = _validate_answer_output(
+                answer,
+                query=run.input.query,
+                evidence=evidence,
+                citation_validation=validation.data,
+                has_images=bool(run.input.image_paths),
+                localization_requested=localization_requested,
+                validated_region_count=validated_region_count,
+            )
+            return {
+                "answer": answer,
+                "citation_validation": validation.data,
+                "output_validation": output_validation,
+            }
+
+        return await self._generate_terminal_with_recovery(
             run,
             runner,
-            "AnswerSynthesizer",
-            prompt,
+            role="AnswerSynthesizer",
+            prompt=prompt,
             stream=should_stream,
+            processor=postprocess_answer,
         )
-        if knowledge_query:
-            answer = _remove_knowledge_boilerplate(answer)
-        answer = _sanitize_public_image_context(
-            answer,
-            has_images=bool(run.input.image_paths),
-            localization_requested=bool(
-                run.route and "lesion_localizer" in run.route.selected_plugins
-            ),
-            validated_region_count=len(
-                (context.get("imaging") or {}).get("regions") or []
-            ),
-        )
-        answer = _moderate_unconfirmed_medical_language(answer, run.risk_level)
-        banner = emergency_banner(run.clinical_state)
-        if banner:
-            answer = banner + "\n\n" + answer
-        validation = self._client_context.get().validate_citations(answer, evidence)
-        if evidence and not validation.data["valid"]:
-            answer += "\n\n> 部分陈述未通过引用一致性核验，请以已列明来源为准。"
-        output_validation = _validate_answer_output(
-            answer,
-            query=run.input.query,
-            evidence=evidence,
-            citation_validation=validation.data,
-            has_images=bool(run.input.image_paths),
-            localization_requested=bool(
-                run.route and "lesion_localizer" in run.route.selected_plugins
-            ),
-            validated_region_count=len(
-                (context.get("imaging") or {}).get("regions") or []
-            ),
-        )
-        return {
-            "answer": answer,
-            "citation_validation": validation.data,
-            "output_validation": output_validation,
-        }
 
     async def _supervisor(self, run: RunRecord, runner: AgentRunner) -> dict[str, Any]:
         prompt = (
@@ -1220,6 +1612,7 @@ class RunOrchestrator:
         from app.domain.models import DifferentialDiagnosis
 
         context = self._completed_context(run)
+        prompt_context = self._prompt_context(run)
         evidence_raw = (context.get("evidence") or {}).get("evidence", [])
         evidence = [EvidenceItem.model_validate(item) for item in evidence_raw]
         evidence_for_prompt = _pack_evidence(
@@ -1230,9 +1623,9 @@ class RunOrchestrator:
         prompt = (
             f"用户任务：{run.input.query}\n风险等级：{run.risk_level}\n"
             f"ClinicalState：{_json_for_prompt(run.clinical_state.model_dump(mode='json'), 1_400, self.config.main_model_name)}\n"
-            f"影像可见观察：{_json_for_prompt(context.get('imaging'), 1_200, self.config.main_model_name)}\n"
-            f"文档解析：{_json_for_prompt(context.get('documents'), 1_000, self.config.main_model_name)}\n"
-            f"音频转写：{_json_for_prompt(context.get('audio'), 500, self.config.main_model_name)}\n"
+            f"影像可见观察：{_json_for_prompt(prompt_context.get('imaging'), 1_200, self.config.main_model_name)}\n"
+            f"文档解析：{_json_for_prompt(prompt_context.get('documents'), 1_000, self.config.main_model_name)}\n"
+            f"音频转写：{_json_for_prompt(prompt_context.get('audio'), 500, self.config.main_model_name)}\n"
             f"可追踪证据：{json.dumps(evidence_for_prompt, ensure_ascii=False)}\n"
             "输出严格 JSON："
             '{"summary":string,"differentials":[{"name":string,'
@@ -1303,11 +1696,12 @@ class RunOrchestrator:
             "general": "综合眼科",
         }
         context = self._completed_context(run)
+        prompt_context = self._prompt_context(run)
         prompt = (
             f"复核亚专科：{labels.get(specialty, labels['general'])}\n"
             f"用户任务：{run.input.query}\n风险等级：{run.risk_level}\n"
             f"ClinicalState：{run.clinical_state.model_dump_json()}\n"
-            f"已完成组件：{_json_for_prompt(context, 3_200, self.config.main_model_name)}\n"
+            f"已完成组件：{_json_for_prompt(prompt_context, 3_200, self.config.main_model_name)}\n"
             f"系统已接收原始影像 {len(run.input.image_paths)} 张；上下文中的影像观察由多模态组件"
             "直接读取这些上传影像后产生。不得声称只获得文本摘要或未提供原始图像。"
             "输出公开复核意见，覆盖关键观察、"
@@ -1338,10 +1732,10 @@ class RunOrchestrator:
         }
 
     async def _critic(self, run: RunRecord, runner: AgentRunner) -> dict[str, Any]:
-        context = self._completed_context(run)
+        prompt_context = self._prompt_context(run)
         prompt = (
             f"风险等级：{run.risk_level}\nClinicalState：{run.clinical_state.model_dump_json()}\n"
-            f"已完成组件：{_json_for_prompt(context, 3_600, self.config.main_model_name)}\n"
+            f"已完成组件：{_json_for_prompt(prompt_context, 3_600, self.config.main_model_name)}\n"
             "检查红旗遗漏、无依据诊断、药物/过敏冲突、坐标伪造与引用风险。"
             "只输出公开问题清单。"
         )
@@ -1365,6 +1759,7 @@ class RunOrchestrator:
         stream: bool = True,
     ) -> dict[str, Any]:
         context = self._completed_context(run)
+        prompt_context = self._prompt_context(run)
         preferences = await self._confirmed_preferences(run)
         evidence_raw = context.get("evidence", {}).get("evidence", [])
         evidence = [EvidenceItem.model_validate(item) for item in evidence_raw]
@@ -1378,13 +1773,13 @@ class RunOrchestrator:
             f"用户已确认的表达偏好：{json.dumps(preferences, ensure_ascii=False)}\n"
             f"已接收输入：影像 {len(run.input.image_paths)} 张、文档 {len(run.input.document_paths)} 份。\n"
             f"ClinicalState：{run.clinical_state.model_dump_json()}\n"
-            f"影像观察：{_json_for_prompt(context.get('imaging'), 1_200, self.config.main_model_name)}\n"
-            f"结构化鉴别评估：{_json_for_prompt(context.get('assessment'), 1_500, self.config.main_model_name)}\n"
-            f"文档内容：{_json_for_prompt(context.get('documents'), 2_000, self.config.main_model_name)}\n"
-            f"音频转写：{_json_for_prompt(context.get('audio'), 700, self.config.main_model_name)}\n"
-            f"候选稿：{_json_for_prompt(context.get('draft'), 1_800, self.config.main_model_name)}\n"
-            f"专科复核：{_json_for_prompt({key: value for key, value in context.items() if key.startswith('specialist_')}, 1_800, self.config.main_model_name)}\n"
-            f"高风险审查：{_json_for_prompt(context.get('critic'), 900, self.config.main_model_name)}\n"
+            f"影像观察：{_json_for_prompt(prompt_context.get('imaging'), 1_200, self.config.main_model_name)}\n"
+            f"结构化鉴别评估：{_json_for_prompt(prompt_context.get('assessment'), 1_500, self.config.main_model_name)}\n"
+            f"文档内容：{_json_for_prompt(prompt_context.get('documents'), 2_000, self.config.main_model_name)}\n"
+            f"音频转写：{_json_for_prompt(prompt_context.get('audio'), 700, self.config.main_model_name)}\n"
+            f"候选稿：{_json_for_prompt(prompt_context.get('draft'), 1_800, self.config.main_model_name)}\n"
+            f"专科复核：{_json_for_prompt({key: value for key, value in prompt_context.items() if key.startswith('specialist_')}, 1_800, self.config.main_model_name)}\n"
+            f"高风险审查：{_json_for_prompt(prompt_context.get('critic'), 900, self.config.main_model_name)}\n"
             f"证据：{json.dumps(evidence_for_prompt, ensure_ascii=False)}\n"
             "若存在候选稿和高风险审查，必须逐项落实修订要求。"
             "生成结构化 Markdown，并根据输入识别实际检查模态；无法确定的患者信息、"
@@ -1396,39 +1791,53 @@ class RunOrchestrator:
             "包含不确定性、下一步行动和研究级诊疗增强免责声明。"
         )
         should_stream = stream and not bool(run.route and run.route.selected_plugins)
-        answer = await self._ask(
+        localization_requested = bool(
+            run.route and "lesion_localizer" in run.route.selected_plugins
+        )
+        validated_region_count = len(
+            (context.get("imaging") or {}).get("regions") or []
+        )
+
+        def postprocess_report(raw_answer: str) -> dict[str, Any]:
+            answer = _sanitize_public_image_context(
+                raw_answer,
+                has_images=bool(run.input.image_paths),
+                localization_requested=localization_requested,
+                validated_region_count=validated_region_count,
+            )
+            answer = _moderate_unconfirmed_medical_language(answer, run.risk_level)
+            banner = emergency_banner(run.clinical_state)
+            if banner:
+                answer = banner + "\n\n" + answer
+            validation = self._client_context.get().validate_citations(answer, evidence)
+            if not evidence:
+                answer += (
+                    "\n\n> 本次未检索到足够的可追踪证据，"
+                    "系统没有用模型常识补造来源。"
+                )
+            output_validation = _validate_answer_output(
+                answer,
+                query=run.input.query,
+                evidence=evidence,
+                citation_validation=validation.data,
+                has_images=bool(run.input.image_paths),
+                localization_requested=localization_requested,
+                validated_region_count=validated_region_count,
+            )
+            return {
+                "answer": answer,
+                "citation_validation": validation.data,
+                "output_validation": output_validation,
+            }
+
+        return await self._generate_terminal_with_recovery(
             run,
             runner,
-            "ReportAgent",
-            prompt,
+            role="ReportAgent",
+            prompt=prompt,
             stream=should_stream,
+            processor=postprocess_report,
         )
-        answer = _sanitize_public_image_context(
-            answer,
-            has_images=bool(run.input.image_paths),
-            localization_requested=bool(
-                run.route and "lesion_localizer" in run.route.selected_plugins
-            ),
-            validated_region_count=len(
-                (context.get("imaging") or {}).get("regions") or []
-            ),
-        )
-        answer = _moderate_unconfirmed_medical_language(answer, run.risk_level)
-        banner = emergency_banner(run.clinical_state)
-        if banner:
-            answer = banner + "\n\n" + answer
-        validation = self._client_context.get().validate_citations(answer, evidence)
-        if evidence and not validation.data["valid"]:
-            answer += (
-                "\n\n## 引用核验提示\n"
-                "生成内容未通过逐条引用一致性核验；以下仅列出本次实际检索到的来源，"
-                "未绑定的医学陈述不应作为诊疗依据。\n"
-            )
-            for item in evidence:
-                answer += f"- [{item.id}] {item.title}，{item.locator or '定位未提供'}（{item.source}）\n"
-        if not evidence:
-            answer += "\n\n> 本次未检索到足够的可追踪证据，系统没有用模型常识补造来源。"
-        return {"answer": answer, "citation_validation": validation.data}
 
     async def _confirmed_preferences(self, run: RunRecord) -> dict[str, Any]:
         if self.memory_store is None:
@@ -1525,13 +1934,21 @@ class RunOrchestrator:
         except (OSError, TypeError, ValueError):
             return
 
-    @staticmethod
-    def _completed_context(run: RunRecord) -> dict[str, Any]:
+    def _completed_context(self, run: RunRecord) -> dict[str, Any]:
+        active = self._node_context.get()
+        if active is not None:
+            return active.payload
         return {
             node.id: node.output
             for node in run.plan
             if node.status == NodeStatus.COMPLETED and node.output is not None
         }
+
+    def _prompt_context(self, run: RunRecord) -> dict[str, Any]:
+        active = self._node_context.get()
+        if active is not None:
+            return active.prompt_payload
+        return self._completed_context(run)
 
     def _check_cancel(self, run: RunRecord) -> None:
         if run.id in self._cancelled:

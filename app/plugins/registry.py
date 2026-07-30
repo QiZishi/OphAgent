@@ -11,7 +11,7 @@ COMMON_CONTEXT = {
     "clinical_state_is_source_of_truth": True,
     "preserve": ["red_flags", "medications", "allergies", "unresolved_questions"],
 }
-COMMON_BUDGET = {"max_model_calls": 12, "max_tokens": 32_000, "max_seconds": 300}
+COMMON_BUDGET = {"max_model_calls": 12, "max_tokens": 40_000, "max_seconds": 300}
 COMMON_SAFETY = {
     "medical_disclaimer": True,
     "evidence_required": True,

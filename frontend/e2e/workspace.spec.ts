@@ -159,8 +159,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole("heading", { name: "视网膜病变随访" })).toBeVisible();
 });
 
-test("桌面端支持克制进度、技能选择、可编辑产物和侧栏键盘调整", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "mobile", "桌面视口专用");
+test("桌面端支持克制进度、技能选择、可编辑产物和侧栏键盘调整", { tag: "@desktop" }, async ({ page }, testInfo) => {
   await expect(page.getByText("已完成", { exact: true })).toBeVisible();
   await expect(page.getByText("应结合视力、眼底和 OCT")).toBeVisible();
   await expect(page.getByText("执行与证据")).toHaveCount(0);
@@ -210,8 +209,7 @@ test("桌面端支持克制进度、技能选择、可编辑产物和侧栏键�
   await page.screenshot({ path: testInfo.outputPath("desktop-narrow.png"), fullPage: true });
 });
 
-test("项目、文件、插件、记忆、知识库和技能入口都可实际打开", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "mobile", "桌面视口专用");
+test("项目、文件、插件、记忆、知识库和技能入口都可实际打开", { tag: "@desktop" }, async ({ page }) => {
   const checks = [
     ["项目", "项目"],
     ["文件库", "文件库"],
@@ -235,8 +233,7 @@ test("项目、文件、插件、记忆、知识库和技能入口都可实际�
   await expect(page.getByRole("region", { name: "持续改进状态" })).toContainText("待离线评测候选");
 });
 
-test("移动端导航有明确入口并可关闭", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name === "desktop", "移动视口专用");
+test("移动端导航有明确入口并可关闭", { tag: "@mobile" }, async ({ page }, testInfo) => {
   await expect(page.getByRole("button", { name: "打开导航" })).toBeVisible();
   await page.getByRole("button", { name: "打开导航" }).click();
   await expect(page.getByRole("button", { name: "新对话", exact: true })).toBeVisible();

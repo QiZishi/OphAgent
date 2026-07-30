@@ -1,9 +1,8 @@
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 
-test("真实模型完成多轮追问、上下文压缩、反馈、重生成和文档编辑", async ({ page }, testInfo) => {
+test("真实模型完成多轮追问、上下文压缩、反馈、重生成和文档编辑", { tag: "@desktop" }, async ({ page }, testInfo) => {
   test.skip(!process.env.RUN_LIVE_AGENT_E2E, "仅在显式启用真实模型验收时运行");
-  test.skip(testInfo.project.name === "mobile", "真实模型工作流只运行一次桌面端");
   test.setTimeout(360_000);
 
   const failedResponses: string[] = [];

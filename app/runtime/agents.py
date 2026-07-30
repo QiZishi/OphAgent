@@ -362,11 +362,11 @@ class AgentScopeRunner:
             "SupervisorAgent": 256,
             "OphthalmologySpecialistAgent": 900,
             "CriticAgent": 900,
-            "ClinicalReasoningAgent": 2_000,
-            "DifferentialAssessmentAgent": 2_000,
+            "ClinicalReasoningAgent": 1_600,
+            "DifferentialAssessmentAgent": 1_600,
             "EvidenceAgent": 1_500,
-            "AnswerSynthesizer": 3_000,
-            "ReportAgent": 4_000,
+            "AnswerSynthesizer": 1_800,
+            "ReportAgent": 2_400,
         }
         return min(
             role_limits.get(base_role, 2_000),

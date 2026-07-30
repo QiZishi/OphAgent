@@ -1,9 +1,8 @@
 import path from "node:path";
 import { expect, test } from "@playwright/test";
 
-test("真实影像可串联病灶定位、辅助评估和报告生成", async ({ page }, testInfo) => {
+test("真实影像可串联病灶定位、辅助评估和报告生成", { tag: "@desktop" }, async ({ page }, testInfo) => {
   test.skip(!process.env.RUN_LIVE_AGENT_E2E, "仅在显式启用真实模型验收时运行");
-  test.skip(testInfo.project.name === "mobile", "真实多模态工作流只运行一次桌面端");
   test.setTimeout(300_000);
 
   const failedResponses: string[] = [];

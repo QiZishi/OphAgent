@@ -10,12 +10,22 @@ from __future__ import annotations
 import hashlib
 import re
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
 from app.core.config import Settings
-from app.domain.models import ContextStats, RunInput, RunRecord, RunStatus, TaskRoute, utc_now
+from app.domain.models import (
+    ContextStats,
+    NodeContextCheckpoint,
+    NodeStatus,
+    PlanNode,
+    RunInput,
+    RunRecord,
+    RunStatus,
+    TaskRoute,
+    utc_now,
+)
 
 if TYPE_CHECKING:
     from app.runtime.store import RuntimeStore
@@ -311,3 +321,179 @@ class ConversationContextManager:
             source_hash=source_hash,
         )
         return prompt_text, clinical_text, stats
+
+
+class NodeExecutionContext(BaseModel):
+    """Bounded dependency context rebuilt deterministically at every node start."""
+
+    payload: dict[str, Any] = Field(default_factory=dict)
+    prompt_payload: dict[str, Any] = Field(default_factory=dict)
+    checkpoint: NodeContextCheckpoint
+
+
+_CONTEXT_KEY_PRIORITY = {
+    "red_flags": 0,
+    "medications": 1,
+    "allergies": 2,
+    "unresolved_questions": 3,
+    "id": 4,
+    "title": 5,
+    "source": 6,
+    "locator": 7,
+    "verified": 8,
+    "summary": 9,
+    "observations": 10,
+    "limitations": 11,
+    "regions": 12,
+    "differentials": 13,
+    "recommended_actions": 14,
+    "evidence": 15,
+}
+_PRESERVED_CONTEXT_FIELDS = [
+    "clinical.red_flags",
+    "clinical.medications",
+    "clinical.allergies",
+    "clinical.unresolved_questions",
+    "evidence.id",
+    "evidence.source",
+    "evidence.locator",
+    "imaging.regions",
+]
+
+
+def _compact_context_value(
+    value: Any,
+    max_tokens: int,
+    model_name: str,
+) -> Any:
+    """Compact valid JSON values while retaining safety and provenance keys first."""
+    if max_tokens <= 0:
+        return None
+    serialized = json_dumps(value)
+    if _token_count(serialized, model_name) <= max_tokens:
+        return value
+    if isinstance(value, str):
+        return _truncate(value, max_tokens, model_name)
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    if isinstance(value, list):
+        if not value:
+            return []
+        result: list[Any] = []
+        item_budget = max(12, max_tokens // min(len(value), 8))
+        for item in value[:8]:
+            compacted = _compact_context_value(item, item_budget, model_name)
+            candidate = [*result, compacted]
+            if _token_count(json_dumps(candidate), model_name) > max_tokens:
+                break
+            result.append(compacted)
+        return result
+    if isinstance(value, dict):
+        ordered = sorted(
+            value.items(),
+            key=lambda item: (_CONTEXT_KEY_PRIORITY.get(str(item[0]), 100), str(item[0])),
+        )
+        result: dict[str, Any] = {}
+        for index, (key, item) in enumerate(ordered):
+            remaining_keys = max(1, len(ordered) - index)
+            used = _token_count(json_dumps(result), model_name)
+            remaining = max_tokens - used
+            if remaining < 8:
+                break
+            compacted = _compact_context_value(
+                item,
+                max(8, remaining // remaining_keys),
+                model_name,
+            )
+            candidate = {**result, str(key): compacted}
+            if _token_count(json_dumps(candidate), model_name) <= max_tokens:
+                result[str(key)] = compacted
+        return result
+    return _truncate(str(value), max_tokens, model_name)
+
+
+def json_dumps(value: Any) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, default=str, sort_keys=True)
+
+
+class ExecutionContextManager:
+    """Defines node hand-off, proactive compaction and reproducible checkpoints."""
+
+    def __init__(self, config: Settings) -> None:
+        self.config = config
+
+    def build(
+        self,
+        run: RunRecord,
+        node: PlanNode,
+        *,
+        token_limit: int | None = None,
+    ) -> NodeExecutionContext:
+        source_nodes = self._ancestor_ids(run, node)
+        raw = {
+            item.id: item.output
+            for item in run.plan
+            if item.id in source_nodes
+            and item.status == NodeStatus.COMPLETED
+            and item.output is not None
+        }
+        model = self.config.main_model_name
+        limit = max(256, token_limit or self.config.CONTEXT_MAX_INPUT_TOKENS)
+        trigger_ratio = min(
+            0.95,
+            max(0.5, self.config.CONTEXT_COMPRESSION_TRIGGER_RATIO),
+        )
+        soft_limit = max(256, int(limit * trigger_ratio))
+        tokens_before = _token_count(json_dumps(raw), model)
+        compressed = tokens_before > soft_limit
+        prompt_payload = (
+            _compact_context_value(raw, soft_limit, model)
+            if compressed
+            else raw
+        )
+        if not isinstance(prompt_payload, dict):
+            prompt_payload = {}
+        tokens_after = _token_count(json_dumps(prompt_payload), model)
+        source_hash = hashlib.sha256(json_dumps(raw).encode()).hexdigest()
+        checkpoint = NodeContextCheckpoint(
+            id=(
+                f"nctx_{run.id.removeprefix('run_')}_{node.id}_"
+                f"{node.attempt}_{source_hash[:12]}"
+            ),
+            node_id=node.id,
+            attempt=node.attempt,
+            source_nodes=source_nodes,
+            source_hash=source_hash,
+            tokens_before=tokens_before,
+            tokens_after=tokens_after,
+            token_limit=limit,
+            compressed=compressed,
+            compression_reason=(
+                "predicted_context_pressure"
+                if compressed
+                else None
+            ),
+            preserved_fields=_PRESERVED_CONTEXT_FIELDS,
+        )
+        return NodeExecutionContext(
+            payload=raw,
+            prompt_payload=prompt_payload,
+            checkpoint=checkpoint,
+        )
+
+    @staticmethod
+    def _ancestor_ids(run: RunRecord, node: PlanNode) -> list[str]:
+        by_id = {item.id: item for item in run.plan}
+        selected: set[str] = set()
+        stack = list(node.depends_on)
+        while stack:
+            dependency = stack.pop()
+            if dependency in selected:
+                continue
+            selected.add(dependency)
+            parent = by_id.get(dependency)
+            if parent is not None:
+                stack.extend(parent.depends_on)
+        return [item.id for item in run.plan if item.id in selected]

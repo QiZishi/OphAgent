@@ -1,4 +1,5 @@
 import asyncio
+import re
 
 import pytest
 from pydantic import SecretStr
@@ -7,6 +8,7 @@ from app.core.config import Settings
 from app.domain.models import (
     Artifact,
     AttachmentRecord,
+    EvidenceItem,
     NodeStatus,
     PlanNode,
     RiskLevel,
@@ -17,7 +19,7 @@ from app.domain.models import (
 )
 from app.plugins.registry import plugin_registry
 from app.runtime.agents import AgentReply
-from app.runtime.context import ConversationContextManager
+from app.runtime.context import ConversationContextManager, ExecutionContextManager
 from app.runtime.errors import CapabilityUnavailable
 from app.runtime.orchestrator import (
     RunOrchestrator,
@@ -176,7 +178,7 @@ async def test_composed_plugins_receive_deep_graph_budget(tmp_path):
     )
 
     assert run.route and run.route.complexity == "deep"
-    assert run.budget.max_tokens == min(32_000, config.RUN_MAX_TOKENS)
+    assert run.budget.max_tokens == min(40_000, config.RUN_MAX_TOKENS)
     assert run.budget.max_model_calls == min(8, config.RUN_MAX_MODEL_CALLS)
 
 
@@ -308,10 +310,10 @@ async def test_actual_over_budget_result_is_preserved_with_warning(tmp_path):
     class UsageSpikeRunner(FakeRunner):
         async def ask(self, role, prompt):
             reply = await super().ask(role, prompt)
-            return reply.model_copy(update={"completion_tokens": 13_000}) if hasattr(reply, "model_copy") else AgentReply(
+            return reply.model_copy(update={"completion_tokens": 25_000}) if hasattr(reply, "model_copy") else AgentReply(
                 text=reply.text,
                 prompt_tokens=reply.prompt_tokens,
-                completion_tokens=13_000,
+                completion_tokens=25_000,
             )
 
     config = build_settings(tmp_path)
@@ -335,7 +337,10 @@ async def test_actual_over_budget_result_is_preserved_with_warning(tmp_path):
 @pytest.mark.asyncio
 async def test_streamed_answer_is_not_published_when_postprocessing_fails(tmp_path):
     class StreamingRunner(FakeRunner):
+        calls = 0
+
         async def ask_stream(self, role, prompt, on_delta):
+            self.calls += 1
             for character in "青光眼是一组进行性视神经病变。":
                 await on_delta(character)
             return AgentReply(
@@ -351,11 +356,12 @@ async def test_streamed_answer_is_not_published_when_postprocessing_fails(tmp_pa
 
     config = build_settings(tmp_path)
     store = RuntimeStore(config)
+    runner = StreamingRunner()
     orchestrator = RunOrchestrator(
         store,
         BrokenCitationValidator(),
         config,
-        runner_factory=lambda clients: StreamingRunner(),
+        runner_factory=lambda clients: runner,
     )
     run = await orchestrator.create(
         7,
@@ -363,14 +369,306 @@ async def test_streamed_answer_is_not_published_when_postprocessing_fails(tmp_pa
     )
     current = await wait_for_terminal(store, run.id)
     assert current.status == RunStatus.FAILED
+    assert runner.calls == 3
     assert not current.answer
     assert current.plan[-1].status == NodeStatus.FAILED
+    events = await store.get_events(run.id)
     deltas = [
         event
-        for event in await store.get_events(run.id)
+        for event in events
         if event.type == "answer.delta"
     ]
     assert deltas == []
+    assert len([event for event in events if event.type == "guardrail.retrying"]) == 6
+    assert len([event for event in events if event.type == "agent.retrying"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_transient_postprocessing_failure_reuses_same_generated_answer(tmp_path):
+    class CountingStreamingRunner(FakeRunner):
+        calls = 0
+
+        async def ask_stream(self, role, prompt, on_delta):
+            self.calls += 1
+            return AgentReply(
+                text="青光眼相关信息需结合眼科检查。",
+                prompt_tokens=30,
+                completion_tokens=20,
+            )
+
+    class FlakyCitationValidator(FakeCapabilityClients):
+        calls = 0
+
+        @classmethod
+        def validate_citations(cls, answer, evidence):
+            cls.calls += 1
+            if cls.calls == 1:
+                raise RuntimeError("一次性后处理故障")
+            return super().validate_citations(answer, evidence)
+
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    runner = CountingStreamingRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FlakyCitationValidator(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="什么是青光眼？", plugin_id="interactive_vqa"),
+    )
+    current = await wait_for_terminal(store, run.id)
+    events = await store.get_events(run.id)
+
+    assert current.status == RunStatus.COMPLETED
+    assert current.answer == "青光眼相关信息需结合眼科检查。"
+    assert runner.calls == 1
+    assert FlakyCitationValidator.calls == 2
+    assert len([event for event in events if event.type == "guardrail.retrying"]) == 1
+    assert not any(event.type == "agent.retrying" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_persistent_postprocessing_failure_rolls_back_and_regenerates_node(tmp_path):
+    class CountingStreamingRunner(FakeRunner):
+        calls = 0
+
+        async def ask_stream(self, role, prompt, on_delta):
+            self.calls += 1
+            evidence_ids = re.findall(r'"id": "(ev_[0-9a-f]+)"', prompt)
+            citation = f" [{evidence_ids[0]}]" if evidence_ids else ""
+            return AgentReply(
+                text=(
+                    "青光眼相关信息需结合完整病史和系统眼科检查后复核"
+                    f"（第 {self.calls} 次生成）。{citation}"
+                ),
+                prompt_tokens=30,
+                completion_tokens=20,
+            )
+
+    class RecoversAfterRollbackValidator(FakeCapabilityClients):
+        calls = 0
+
+        @classmethod
+        def validate_citations(cls, answer, evidence):
+            cls.calls += 1
+            if cls.calls <= 3:
+                raise RuntimeError("当前生成轮次的后处理持续失败")
+            return super().validate_citations(answer, evidence)
+
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    runner = CountingStreamingRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        RecoversAfterRollbackValidator(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="什么是青光眼？", plugin_id="interactive_vqa"),
+    )
+    current = await wait_for_terminal(store, run.id)
+    events = await store.get_events(run.id)
+
+    assert current.status == RunStatus.COMPLETED
+    assert "第 2 次生成" in current.answer
+    assert runner.calls == 2
+    assert RecoversAfterRollbackValidator.calls == 4
+    assert len([event for event in events if event.type == "guardrail.retrying"]) == 2
+    assert len([event for event in events if event.type == "agent.retrying"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_citations_regenerate_terminal_node_before_publication(tmp_path):
+    class CitationRepairRunner(FakeRunner):
+        answer_calls = 0
+        answer_prompts: list[str] = []
+
+        async def ask_stream(self, role, prompt, on_delta):
+            if role != "AnswerSynthesizer":
+                return await super().ask(role, prompt)
+            self.answer_calls += 1
+            self.answer_prompts.append(prompt)
+            evidence_ids = re.findall(r'"id": "(ev_[0-9a-f]+)"', prompt)
+            citation = f" [{evidence_ids[0]}]" if self.answer_calls > 1 else ""
+            return AgentReply(
+                text=f"青光眼评估需结合完整病史和系统眼科检查后再复核。{citation}",
+                prompt_tokens=30,
+                completion_tokens=20,
+            )
+
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    runner = CitationRepairRunner()
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: runner,
+    )
+    run = await orchestrator.create(
+        7,
+        RunInput(query="什么是青光眼？", plugin_id="interactive_vqa"),
+    )
+    current = await wait_for_terminal(store, run.id)
+    events = await store.get_events(run.id)
+
+    assert current.status == RunStatus.COMPLETED
+    assert runner.answer_calls == 2
+    assert "[ev_" in current.answer
+    assert current.plan[-1].output["citation_validation"]["valid"] is True
+    assert len([event for event in events if event.type == "agent.retrying"]) == 1
+    assert "citation_coverage_failed" in runner.answer_prompts[1]
+    assert "每个医学事实段落" in runner.answer_prompts[1]
+    assert "claim_paragraph_count" in runner.answer_prompts[1]
+    assert "至多 3 个短段落" in runner.answer_prompts[1]
+
+
+def test_node_context_is_dependency_scoped_and_compacts_before_limit(tmp_path):
+    config = build_settings(tmp_path).model_copy(
+        update={
+            "CONTEXT_MAX_INPUT_TOKENS": 400,
+            "CONTEXT_COMPRESSION_TRIGGER_RATIO": 0.82,
+        }
+    )
+    clinical = PlanNode(
+        id="clinical",
+        title="临床状态",
+        agent="ClinicalReasoningAgent",
+        capability="main_model",
+        status=NodeStatus.COMPLETED,
+        output={
+            "clinical_state": {
+                "red_flags": [{"value": "突发视力下降", "source": "user"}],
+                "medications": [{"value": "噻吗洛尔", "source": "user"}],
+                "allergies": [{"value": "磺胺", "source": "user"}],
+                "unresolved_questions": ["眼压是多少？"],
+                "notes": "冗余描述" * 1000,
+            }
+        },
+    )
+    unrelated = PlanNode(
+        id="documents",
+        title="无关文档",
+        agent="DocumentParser",
+        capability="document_parser",
+        status=NodeStatus.COMPLETED,
+        output={"text": "不应传给本节点" * 1000},
+    )
+    evidence_item = EvidenceItem(
+        title="测试证据",
+        source="tests/fixture.md",
+        excerpt="证据正文" * 1000,
+        locator="第 1 段",
+        verified=True,
+    )
+    evidence = PlanNode(
+        id="evidence",
+        title="证据",
+        agent="EvidenceAgent",
+        capability="medical_retrieval",
+        status=NodeStatus.COMPLETED,
+        output={"evidence": [evidence_item.model_dump(mode="json")]},
+    )
+    answer = PlanNode(
+        id="answer",
+        title="回答",
+        agent="AnswerSynthesizer",
+        capability="main_model",
+        depends_on=["clinical", "evidence"],
+        attempt=1,
+    )
+    run = RunRecord(
+        id="run_node_context",
+        user_id=7,
+        input=RunInput(query="下一步怎么办"),
+        plugin=plugin_registry.get("interactive_vqa"),
+        plan=[clinical, unrelated, evidence, answer],
+    )
+
+    context = ExecutionContextManager(config).build(run, answer, token_limit=400)
+
+    assert set(context.payload) == {"clinical", "evidence"}
+    assert set(context.prompt_payload) == {"clinical", "evidence"}
+    assert context.checkpoint.source_nodes == ["clinical", "evidence"]
+    assert context.checkpoint.compressed is True
+    assert context.checkpoint.tokens_after <= int(400 * 0.82)
+    assert context.payload["clinical"]["clinical_state"]["notes"].endswith("冗余描述")
+    restored_evidence = EvidenceItem.model_validate(
+        context.payload["evidence"]["evidence"][0]
+    )
+    assert restored_evidence.retrieved_at == evidence_item.retrieved_at
+    state = context.prompt_payload["clinical"]["clinical_state"]
+    assert state["red_flags"]
+    assert state["medications"]
+    assert state["allergies"]
+    assert state["unresolved_questions"]
+
+
+@pytest.mark.asyncio
+async def test_resume_preserves_completed_dependencies_and_requeues_failure_descendants(
+    tmp_path,
+):
+    config = build_settings(tmp_path)
+    store = RuntimeStore(config)
+    run = RunRecord(
+        user_id=7,
+        status=RunStatus.FAILED,
+        input=RunInput(query="恢复报告"),
+        plugin=plugin_registry.get("report_generator"),
+        plan=[
+            PlanNode(
+                id="clinical",
+                title="临床状态",
+                agent="ClinicalReasoningAgent",
+                capability="main_model",
+                status=NodeStatus.FAILED,
+                error_code="node_failed",
+                output={"status": "failed", "detail": "测试失败"},
+            ),
+            PlanNode(
+                id="evidence",
+                title="证据",
+                agent="EvidenceAgent",
+                capability="medical_retrieval",
+                status=NodeStatus.COMPLETED,
+                output={"evidence": []},
+            ),
+            PlanNode(
+                id="report",
+                title="报告",
+                agent="ReportAgent",
+                capability="main_model",
+                depends_on=["clinical", "evidence"],
+                status=NodeStatus.SKIPPED,
+                output={"status": "skipped"},
+            ),
+        ],
+    )
+    await store.create_run(run)
+    orchestrator = RunOrchestrator(
+        store,
+        FakeCapabilityClients(),
+        config,
+        runner_factory=lambda clients: FakeRunner(),
+    )
+    orchestrator._spawn = lambda run_id: None
+
+    resumed = await orchestrator.resume(run.id, 7)
+
+    assert resumed.status == RunStatus.QUEUED
+    assert resumed.plan[0].status == NodeStatus.PENDING
+    assert resumed.plan[1].status == NodeStatus.COMPLETED
+    assert resumed.plan[1].output == {"evidence": []}
+    assert resumed.plan[2].status == NodeStatus.PENDING
+    event = (await store.get_events(run.id))[-1]
+    assert event.type == "run.resumed"
+    assert event.data["preserved_nodes"] == ["evidence"]
+    assert event.data["requeued_nodes"] == ["clinical", "report"]
 
 
 @pytest.mark.asyncio
