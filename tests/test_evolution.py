@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import SecretStr
 
 from app.core.config import Settings
@@ -54,6 +57,14 @@ def build_harness(tmp_path):
                 "status": "sealed",
                 "component_contract_set": "ophagent-harness-core",
                 "component_contract_schema_version": 1,
+                "component_contract_checksum": hashlib.sha256(
+                    (
+                        Path(__file__).parents[1]
+                        / "config"
+                        / "immutable"
+                        / "harness_component_contracts.yaml"
+                    ).read_bytes(),
+                ).hexdigest(),
                 "source_protocol": {"historical_outputs_reused": False},
                 "case_file": "cases.jsonl",
                 "case_count": len(sealed_cases),
@@ -93,6 +104,18 @@ def build_harness(tmp_path):
 
 
 def cases(delta=0.0):
+    contract_manifest = yaml.safe_load(
+        (
+            Path(__file__).parents[1]
+            / "config"
+            / "immutable"
+            / "harness_component_contracts.yaml"
+        ).read_text("utf-8"),
+    )
+    component_contracts = {
+        component["id"]: True
+        for component in contract_manifest["components"]
+    }
     return [
         EvaluationCaseResult(
             case_id="routine-1",
@@ -102,6 +125,7 @@ def cases(delta=0.0):
             latency_ms=100,
             passed=True,
             component_contract_passed=True,
+            component_contracts=component_contracts,
         ),
         EvaluationCaseResult(
             case_id="complex-1",
@@ -111,6 +135,7 @@ def cases(delta=0.0):
             latency_ms=120,
             passed=True,
             component_contract_passed=True,
+            component_contracts=component_contracts,
         ),
         EvaluationCaseResult(
             case_id="high-1",
@@ -120,6 +145,7 @@ def cases(delta=0.0):
             latency_ms=110,
             passed=True,
             component_contract_passed=True,
+            component_contracts=component_contracts,
         ),
     ]
 
@@ -169,6 +195,10 @@ def test_worktree_attested_gate_and_atomic_release(tmp_path):
     decision = harness.promote(proposal.id)
     assert decision.accepted
     assert git(repo, "rev-parse", "refs/ophagent/active") == candidate_commit
+    activation = json.loads(harness.activation_path.read_text("utf-8"))
+    assert activation["release_commit"] == candidate_commit
+    assert activation["runtime_active"] is False
+    assert activation["reload_required"] is True
     assert proposal.id in harness.experience_path.read_text("utf-8")
 
 

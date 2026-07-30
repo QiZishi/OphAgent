@@ -25,6 +25,7 @@ from app.domain.models import (
     RunStatus,
     utc_now,
 )
+from app.services.skill_policy import SAFETY_CRITICAL_SKILLS
 from app.services.state import atomic_json
 
 SAFE_TOKEN = re.compile(r"[^a-zA-Z0-9_.:-]+")
@@ -35,9 +36,6 @@ TERMINAL = {
     RunStatus.CANCELLED,
     RunStatus.INTERRUPTED,
 }
-PROTECTED_SKILLS = {"red_flag_triage"}
-
-
 def _safe(value: str | None, fallback: str = "unknown") -> str:
     cleaned = SAFE_TOKEN.sub("_", value or "").strip("._:-")
     return cleaned[:120] or fallback
@@ -286,7 +284,7 @@ class ContinuousEvolutionController:
         Safety-critical, high-risk and emergency skills stay at neutral utility;
         changing their content or activation requires the offline review path.
         """
-        if skill_id in PROTECTED_SKILLS or risk_level in {"high", "emergency"}:
+        if skill_id in SAFETY_CRITICAL_SKILLS or risk_level in {"high", "emergency"}:
             return 1.0
         positives = 0
         negatives = 0

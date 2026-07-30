@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from app.core.config import Settings, settings
 from app.domain.models import KnowledgeSource
+from app.services.state import PersistentStateError
 
 YEAR_PATTERN = re.compile(r"(?:19|20)\d{2}")
 LOW_TRUST_PREFIXES = ("baidubaike_", "xywy_", "dxy_")
@@ -109,12 +110,27 @@ class SourceRegistry:
         try:
             payload = json.loads(self.path.read_text("utf-8"))
             return [KnowledgeSource.model_validate(item) for item in payload]
-        except (OSError, ValueError, TypeError):
-            return []
+        except (OSError, ValueError, TypeError) as exc:
+            raise PersistentStateError(
+                f"知识源注册表损坏或不可读：{self.path}",
+            ) from exc
 
-    def list(self, *, refresh: bool = True) -> list[KnowledgeSource]:
+    def list(
+        self,
+        *,
+        refresh: bool = True,
+        user_id: int | None = None,
+        include_private: bool = False,
+    ) -> list[KnowledgeSource]:
         with self._lock:
-            return self._list_unlocked(refresh=refresh)
+            records = self._list_unlocked(refresh=refresh)
+            if include_private:
+                return records
+            return [
+                record
+                for record in records
+                if record.imported_by is None or record.imported_by == user_id
+            ]
 
     def _list_unlocked(self, *, refresh: bool = True) -> list[KnowledgeSource]:
         records = self._load()
@@ -150,10 +166,11 @@ class SourceRegistry:
         return result
 
     def get(self, source_id: str) -> KnowledgeSource:
-        for record in self.list():
-            if record.id == source_id:
-                return record
-        raise KeyError(source_id)
+        with self._lock:
+            for record in self._list_unlocked():
+                if record.id == source_id:
+                    return record
+            raise KeyError(source_id)
 
     def save(self, records: list[KnowledgeSource]) -> None:
         with self._lock:

@@ -17,7 +17,7 @@ import { api } from "./api";
 import { ManagementViews, type ManagementView } from "./ManagementViews";
 import { PLUGINS } from "./features/plugins";
 import { LoadingDots } from "./components/LoadingDots";
-import type { Artifact, AttachmentRecord, Capability, Conversation, EvolutionStatus, Project, ProviderConfig, ProviderId } from "./types";
+import type { Artifact, AttachmentRecord, Capability, Conversation, EvolutionStatus, Project, ProviderConfig, ProviderId, UserProfile } from "./types";
 import type { WorkspaceView } from "./components/Sidebar";
 
 interface WorkspaceViewsProps {
@@ -28,6 +28,7 @@ interface WorkspaceViewsProps {
   conversations: Conversation[];
   onConversationProject: (conversationId: number, projectId: number | null) => Promise<void>;
   onSignedOut: () => void;
+  user: UserProfile;
 }
 
 const MANAGED = new Set<WorkspaceView>(["memories", "skills", "knowledge"]);
@@ -38,6 +39,8 @@ export function WorkspaceViews(props: WorkspaceViewsProps) {
       <ManagementViews
         view={props.view as ManagementView}
         capabilities={props.capabilities}
+        canManageSystem={props.user.role === "admin"}
+        userId={props.user.id}
       />
     );
   }
@@ -407,7 +410,12 @@ function SettingsPage({
         >{passwordBusy ? "正在更新…" : "更新并退出"}</button>
         {passwordError && <p role="alert">{passwordError}</p>}
       </section>
-      <ManagementViews view="capabilities" capabilities={capabilities} />
+      <ManagementViews
+        view="capabilities"
+        capabilities={capabilities}
+        canManageSystem={false}
+        userId={0}
+      />
     </section>
   );
 }

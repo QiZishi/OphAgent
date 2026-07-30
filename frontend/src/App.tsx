@@ -674,6 +674,7 @@ export default function App() {
           </header>
           <WorkspaceViews
             view={workspaceView}
+            user={profile}
             capabilities={capabilities}
             conversations={conversations}
             onNavigate={setWorkspaceView}

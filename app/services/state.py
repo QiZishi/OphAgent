@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,21 +23,46 @@ from app.domain.models import (
     SkillRecord,
     utc_now,
 )
-from app.services.skill_policy import requires_offline_skill_review
+from app.services.skill_policy import (
+    SAFETY_CRITICAL_SKILLS,
+    requires_offline_skill_review,
+)
 
 WORD_PATTERN = re.compile(r"[\u4e00-\u9fff]|[A-Za-z0-9]+")
 SKILL_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_-]{2,63}$")
 SEMVER_PATTERN = re.compile(r"^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$")
 
 
+class PersistentStateError(RuntimeError):
+    """A durable state file exists but cannot be safely interpreted."""
+
+
 def atomic_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
-    os.replace(tmp, path)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            json.dump(
+                value,
+                temporary,
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _normalize(value: str) -> str:
@@ -62,8 +88,10 @@ class MemoryStore:
                 MemoryRecord.model_validate(item)
                 for item in json.loads(self.path.read_text("utf-8"))
             ]
-        except (OSError, ValueError, TypeError):
-            return []
+        except (OSError, ValueError, TypeError) as exc:
+            raise PersistentStateError(
+                f"Memory 状态文件损坏或不可读：{self.path}",
+            ) from exc
 
     def _preferences(self) -> dict[str, bool]:
         if not self.preference_path.exists():
@@ -75,8 +103,10 @@ class MemoryStore:
                     self.preference_path.read_text("utf-8"),
                 ).items()
             }
-        except (OSError, ValueError, TypeError):
-            return {}
+        except (OSError, ValueError, TypeError) as exc:
+            raise PersistentStateError(
+                f"Memory 偏好状态文件损坏或不可读：{self.preference_path}",
+            ) from exc
 
     async def enabled(self, user_id: int) -> bool:
         return self._preferences().get(str(user_id), True)
@@ -525,8 +555,10 @@ class SkillStore:
                 str(key): ({"status": value} if isinstance(value, str) else dict(value))
                 for key, value in raw.items()
             }
-        except (OSError, ValueError, TypeError):
-            return {}
+        except (OSError, ValueError, TypeError) as exc:
+            raise PersistentStateError(
+                f"Skill 状态文件损坏或不可读：{self.path}",
+            ) from exc
 
     async def list(self) -> list[SkillRecord]:
         states = self._states()
@@ -694,6 +726,8 @@ class SkillStore:
     async def set_status(self, skill_id: str, status: str) -> SkillRecord:
         if status not in {"enabled", "disabled", "rejected"}:
             raise ValueError("validated 状态只能由评测接口写入")
+        if skill_id in SAFETY_CRITICAL_SKILLS and status != "enabled":
+            raise ValueError("安全关键 Skill 不能通过在线接口停用或拒绝")
         skill = await self.list_by_id(skill_id)
         if status == "enabled":
             is_candidate = ".candidates" in Path(skill.path).parts

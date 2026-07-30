@@ -62,7 +62,14 @@ class FakeRunner:
 class FakeCapabilityClients:
     """Real-shaped fake; injected explicitly and never imported by app code."""
 
-    async def retrieve_medical_evidence(self, query: str, top_k: int = 6) -> ToolResult:
+    async def retrieve_medical_evidence(
+        self,
+        query: str,
+        top_k: int = 6,
+        *,
+        user_id: int | None = None,
+    ) -> ToolResult:
+        del user_id
         item = EvidenceItem(
             title="测试指南",
             source="tests/fixtures/guideline.md",

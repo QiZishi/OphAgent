@@ -308,6 +308,7 @@ export interface KnowledgeSource {
   population?: string;
   status: "current" | "expired" | "superseded" | "unknown";
   superseded_by?: string;
+  imported_by?: number;
   verified: boolean;
 }
 

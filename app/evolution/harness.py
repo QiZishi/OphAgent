@@ -15,6 +15,8 @@ from pathlib import Path
 from statistics import fmean, pstdev
 from typing import Any
 
+import yaml
+
 from app.core.config import Settings, settings
 from app.domain.models import (
     ContinuousEvolutionCandidate,
@@ -82,6 +84,88 @@ class EvolutionHarness:
         self.experience_path = self.state_dir / "experience.jsonl"
         self.approval_dir = self.state_dir / "approvals"
         self.worktree_root = config.resolve_path(config.EVOLUTION_WORKTREE_DIR)
+        self.activation_path = self.state_dir / "active_release.json"
+
+    def _component_contract_path(self) -> Path:
+        return self.config.resolve_path(
+            "config/immutable/harness_component_contracts.yaml",
+        )
+
+    def _component_contract_manifest(self) -> dict[str, Any]:
+        path = self._component_contract_path()
+        try:
+            manifest = yaml.safe_load(path.read_text("utf-8"))
+        except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+            raise EvolutionPolicyError("Harness 组件契约不可读或无效") from exc
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("contract_set") != "ophagent-harness-core"
+            or manifest.get("governance_track") != "immutable"
+            or not isinstance(manifest.get("components"), list)
+        ):
+            raise EvolutionPolicyError("Harness 组件契约结构无效")
+        return manifest
+
+    def _component_contract_checksum(self) -> str:
+        try:
+            content = self._component_contract_path().read_bytes()
+        except OSError as exc:
+            raise EvolutionPolicyError("Harness 组件契约不可读") from exc
+        return hashlib.sha256(content).hexdigest()
+
+    def affected_component_ids(self, paths: list[str]) -> set[str]:
+        """Map actual mutation paths to controller-owned component contracts."""
+        manifest = self._component_contract_manifest()
+        affected: set[str] = set()
+        normalized_paths = [_validate_relative_path(path) for path in paths]
+        for component in manifest["components"]:
+            component_id = str(component.get("id") or "").strip()
+            declared_paths = component.get("paths")
+            if not component_id or not isinstance(declared_paths, list):
+                raise EvolutionPolicyError("Harness 组件契约缺少 id 或 paths")
+            for declared_value in declared_paths:
+                declared = str(declared_value).rstrip("/")
+                if any(
+                    path == declared
+                    or path.startswith(declared + "/")
+                    or (
+                        "/" in declared
+                        and path.startswith(declared.rsplit("/", 1)[0] + "/")
+                        and Path(declared).suffix
+                    )
+                    for path in normalized_paths
+                ):
+                    affected.add(component_id)
+                    break
+        if not affected:
+            raise EvolutionPolicyError(
+                "候选修改未映射到任何 Harness 组件核心契约",
+            )
+        return affected
+
+    def _verify_component_contract_evidence(
+        self,
+        paths: list[str],
+        candidate: EvaluationRunResult,
+    ) -> None:
+        affected = self.affected_component_ids(paths)
+        for case in candidate.cases:
+            missing = sorted(affected - case.component_contracts.keys())
+            failed = sorted(
+                component_id
+                for component_id in affected
+                if case.component_contracts.get(component_id) is not True
+            )
+            if missing:
+                raise EvolutionPolicyError(
+                    f"病例 {case.case_id} 缺少受影响组件契约证据："
+                    + ",".join(missing),
+                )
+            if failed or not case.component_contract_passed:
+                raise EvolutionPolicyError(
+                    f"病例 {case.case_id} 的受影响组件契约未通过："
+                    + ",".join(failed or sorted(affected)),
+                )
 
     def create_proposal(self, proposal: EvolutionProposal) -> EvolutionProposal:
         if not SAFE_ID.fullmatch(proposal.id):
@@ -336,6 +420,8 @@ class EvolutionHarness:
         if (
             manifest.get("component_contract_set") != "ophagent-harness-core"
             or manifest.get("component_contract_schema_version") != 1
+            or manifest.get("component_contract_checksum")
+            != self._component_contract_checksum()
         ):
             raise EvolutionPolicyError("sealed test 未绑定当前 Harness 组件核心契约")
         source_protocol = manifest.get("source_protocol")
@@ -537,6 +623,10 @@ class EvolutionHarness:
         candidate = self.load_evaluation(proposal_id, "sealed_test", "candidate")
         self._verify_attestation(baseline)
         self._verify_attestation(candidate)
+        self._verify_component_contract_evidence(
+            self.changed_paths(proposal_id),
+            candidate,
+        )
         decision = self.decide(baseline, candidate)
         if not decision.accepted:
             raise EvolutionPolicyError("未通过非劣与收益门禁的候选不能审批")
@@ -613,6 +703,7 @@ class EvolutionHarness:
         changed = self.changed_paths(proposal_id)
         if not changed:
             raise EvolutionPolicyError("候选没有真实激活的代码或配置修改")
+        self._verify_component_contract_evidence(changed, candidate)
         decision = self.decide(baseline, candidate)
         proposal.status = "accepted" if decision.accepted else "rejected"
         self._save_proposal(proposal)
@@ -666,6 +757,18 @@ class EvolutionHarness:
             capture_output=True,
             text=True,
             timeout=120,
+        )
+        checkout_commit = _run_git(self.repo, ["rev-parse", "HEAD"]).stdout.strip()
+        atomic_json(
+            self.activation_path,
+            {
+                "release_commit": commit,
+                "previous_release_commit": previous or None,
+                "runtime_checkout_commit": checkout_commit,
+                "runtime_active": checkout_commit == commit,
+                "reload_required": checkout_commit != commit,
+                "updated_at": utc_now().isoformat(),
+            },
         )
         proposal.status = "promoted"
         self._save_proposal(proposal)

@@ -140,7 +140,9 @@ class HybridKnowledgeRetriever:
         ).hexdigest()
 
     def _load_or_build_lexical_index(self) -> None:
-        sources = self.registry.list()
+        # Build one physical index, then enforce source ownership before
+        # ranking results. Public sources remain available to every user.
+        sources = self.registry.list(include_private=True)
         self._sources = {item.id: item for item in sources}
         fingerprint = self._corpus_fingerprint(sources)
         manifest: dict[str, Any] = {}
@@ -341,7 +343,13 @@ class HybridKnowledgeRetriever:
             self._building = False
         return self.status()
 
-    async def search(self, query: str, top_k: int = 6) -> list[EvidenceItem]:
+    async def search(
+        self,
+        query: str,
+        top_k: int = 6,
+        *,
+        user_id: int | None = None,
+    ) -> list[EvidenceItem]:
         await self._ensure_index()
         assert self._chunks is not None
         query_terms = tokenize(query)
@@ -370,6 +378,7 @@ class HybridKnowledgeRetriever:
             key=lambda item: item[0],
             reverse=True,
         )
+        ordered = self._filter_source_access(ordered, user_id=user_id)
         ordered = self._filter_source_lifecycle(ordered)
         quality_ordered = sorted(
             (
@@ -538,6 +547,21 @@ class HybridKnowledgeRetriever:
                 title=item[1].title,
                 path=item[1].source,
             )).status not in {"expired", "superseded"}
+        ]
+
+    def _filter_source_access(
+        self,
+        candidates: list[tuple[float, Chunk]],
+        *,
+        user_id: int | None,
+    ) -> list[tuple[float, Chunk]]:
+        return [
+            item
+            for item in candidates
+            if (
+                (source := self._sources.get(item[1].source_id)) is not None
+                and (source.imported_by is None or source.imported_by == user_id)
+            )
         ]
 
     def _to_evidence(self, score: float, chunk: Chunk) -> EvidenceItem:

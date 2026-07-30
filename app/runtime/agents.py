@@ -22,7 +22,10 @@ from agentscope.plan import PlanNotebook
 from agentscope.tool import Toolkit, ToolResponse
 
 from app.core.config import Settings, settings
-from app.services.skill_policy import requires_offline_skill_review
+from app.services.skill_policy import (
+    SAFETY_CRITICAL_SKILLS,
+    requires_offline_skill_review,
+)
 from app.tools.capabilities import CapabilityClients, SearchRequest
 
 AGENT_PROMPTS = {
@@ -93,9 +96,6 @@ ROLE_CAPABILITIES = {
         "triage",
     },
 }
-SAFETY_CRITICAL_SKILLS = {"red_flag_triage"}
-
-
 @dataclass(slots=True)
 class AgentReply:
     text: str
@@ -143,6 +143,7 @@ class AgentScopeRunner:
         self._agents: dict[str, ReActAgent] = {}
         self.active_plugin_ids: set[str] = set()
         self.requested_skill_ids: set[str] = set()
+        self.user_id: int | None = None
         self.used_skill_ids: set[str] = set()
         self._skill_utility_provider: Callable[[str, str], float] | None = None
 
@@ -150,9 +151,11 @@ class AgentScopeRunner:
         self,
         plugin_id: str | list[str],
         requested_skill_ids: list[str] | None = None,
+        user_id: int | None = None,
     ) -> None:
         self.active_plugin_ids = {plugin_id} if isinstance(plugin_id, str) else set(plugin_id)
         self.requested_skill_ids = set(requested_skill_ids or [])
+        self.user_id = user_id
 
     def set_skill_utility_provider(
         self,
@@ -195,7 +198,11 @@ class AgentScopeRunner:
 
         async def medical_retrieval(query: str, top_k: int = 6) -> ToolResponse:
             """检索本地眼科指南，返回带来源与定位的证据。"""
-            result = await self.clients.retrieve_medical_evidence(query, top_k)
+            result = await self.clients.retrieve_medical_evidence(
+                query,
+                top_k,
+                user_id=self.user_id,
+            )
             return ToolResponse(content=[{"type": "text", "text": result.model_dump_json()}])
 
         async def web_search(query: str, max_results: int = 5) -> ToolResponse:
@@ -337,7 +344,7 @@ class AgentScopeRunner:
                     else None
                 ),
                 parallel_tool_calls=True,
-                max_iters=1,
+                max_iters=max(2, min(self.config.AGENT_MAX_ITERS, 8)),
             )
         return self._agents[role]
 
@@ -430,7 +437,14 @@ class AgentScopeRunner:
         body: dict[str, Any] = {
             "model": self.config.main_model_name,
             "messages": [
-                {"role": "system", "content": AGENT_PROMPTS[self._base_role(role)]},
+                {
+                    "role": "system",
+                    "content": (
+                        AGENT_PROMPTS[self._base_role(role)]
+                        + "\n"
+                        + (self._toolkit(role).get_agent_skill_prompt() or "")
+                    ),
+                },
                 {"role": "user", "content": prompt},
             ],
             "temperature": self.config.TEMPERATURE,

@@ -103,7 +103,8 @@ async def test_quick_math_uses_one_call_no_retrieval_no_report(tmp_path):
     class TrackingClients(FakeCapabilityClients):
         retrieval_calls = 0
 
-        async def retrieve_medical_evidence(self, query, top_k=6):
+        async def retrieve_medical_evidence(self, query, top_k=6, *, user_id=None):
+            del user_id
             self.retrieval_calls += 1
             return await super().retrieve_medical_evidence(query, top_k)
 
@@ -209,9 +210,13 @@ async def test_follow_up_receives_prior_turn_and_inherits_retrieval_route(tmp_pa
     class RetrievalClients(FakeCapabilityClients):
         queries: list[str] = []
 
-        async def retrieve_medical_evidence(self, query, top_k=6):
+        async def retrieve_medical_evidence(self, query, top_k=6, *, user_id=None):
             self.queries.append(query)
-            return await super().retrieve_medical_evidence(query, top_k)
+            return await super().retrieve_medical_evidence(
+                query,
+                top_k,
+                user_id=user_id,
+            )
 
     config = build_settings(tmp_path)
     store = RuntimeStore(config)
@@ -328,7 +333,7 @@ async def test_actual_over_budget_result_is_preserved_with_warning(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_streamed_answer_survives_postprocessing_failure(tmp_path):
+async def test_streamed_answer_is_not_published_when_postprocessing_fails(tmp_path):
     class StreamingRunner(FakeRunner):
         async def ask_stream(self, role, prompt, on_delta):
             for character in "青光眼是一组进行性视神经病变。":
@@ -357,15 +362,15 @@ async def test_streamed_answer_survives_postprocessing_failure(tmp_path):
         RunInput(query="什么是青光眼？", plugin_id="interactive_vqa"),
     )
     current = await wait_for_terminal(store, run.id)
-    assert current.status == RunStatus.COMPLETED_WITH_WARNINGS
-    assert current.answer == "青光眼是一组进行性视神经病变。"
-    assert current.plan[-1].output and current.plan[-1].output["partial"] is True
+    assert current.status == RunStatus.FAILED
+    assert not current.answer
+    assert current.plan[-1].status == NodeStatus.FAILED
     deltas = [
         event
         for event in await store.get_events(run.id)
         if event.type == "answer.delta"
     ]
-    assert len(deltas) == 1
+    assert deltas == []
 
 
 @pytest.mark.asyncio

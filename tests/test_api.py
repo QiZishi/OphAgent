@@ -98,6 +98,10 @@ def test_authenticated_management_endpoints():
             "report_generator",
         }
         assert client.get("/api/v1/skills").status_code == 200
+        assert client.patch(
+            "/api/v1/skills/red_flag_triage",
+            json={"status": "disabled"},
+        ).status_code == 403
         assert client.get("/api/v1/knowledge/status").status_code == 200
         assert client.get("/api/v1/capabilities").status_code == 200
         evolution = client.get("/api/v1/evolution/status")
@@ -105,7 +109,7 @@ def test_authenticated_management_endpoints():
         assert evolution.json()["production_mutation"] == "disabled"
         assert evolution.json()["human_approval_required"] is True
         accepted_rebuild = client.post("/api/v1/knowledge/index?include_embeddings=false")
-        assert accepted_rebuild.status_code in {202, 409}
+        assert accepted_rebuild.status_code == 403
 
         project = client.post(
             "/api/v1/projects",

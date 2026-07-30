@@ -105,7 +105,7 @@ function MemoriesPage() {
   );
 }
 
-function SkillsPage() {
+function SkillsPage({ canManageSystem }: { canManageSystem: boolean }) {
   const [skills, setSkills] = useState<SkillRecord[]>([]);
   const [markdown, setMarkdown] = useState("");
   const [error, setError] = useState("");
@@ -115,14 +115,18 @@ function SkillsPage() {
     <>
       <PageHeader eyebrow="CONTROLLED SKILLS" title="Skill 注册表" copy="候选 Skill 先隔离，再校验结构、依赖、安全规则和内容 checksum。" />
       {error && <p className="management-error">{error}</p>}
-      <details className="import-panel">
-        <summary><Sparkles size={15} />导入候选 SKILL.md</summary>
-        <textarea value={markdown} onChange={(event) => setMarkdown(event.target.value)} placeholder="粘贴含 frontmatter 的完整 SKILL.md" />
-        <button onClick={async () => {
-          try { await api.importSkill(markdown); setMarkdown(""); await load(); }
-          catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败"); }
-        }}>进入候选隔离区</button>
-      </details>
+      {canManageSystem ? (
+        <details className="import-panel">
+          <summary><Sparkles size={15} />导入候选 SKILL.md</summary>
+          <textarea value={markdown} onChange={(event) => setMarkdown(event.target.value)} placeholder="粘贴含 frontmatter 的完整 SKILL.md" />
+          <button onClick={async () => {
+            try { await api.importSkill(markdown); setMarkdown(""); await load(); }
+            catch (reason) { setError(reason instanceof Error ? reason.message : "导入失败"); }
+          }}>进入候选隔离区</button>
+        </details>
+      ) : (
+        <p className="provenance">系统级 Skill 由管理员维护；你可以查看当前可用能力，并在对话中选择已启用 Skill。</p>
+      )}
       <div className="management-grid">
         {skills.map((skill) => (
           <article className="management-card" key={skill.id}>
@@ -130,12 +134,12 @@ function SkillsPage() {
             <p>{skill.description}</p>
             <div className="provenance">风险：{skill.risk_level} · 依赖：{skill.dependencies.length || "无"}</div>
             {Boolean(skill.evaluation.passed) && <div className="pass-note"><ShieldCheck size={14} />当前内容已通过门禁</div>}
-            <footer>
+            {canManageSystem && <footer>
               {skill.status === "candidate" && <button onClick={async () => { await api.validateSkill(skill.id); await load(); }}><Gauge size={14} />执行评测</button>}
               {skill.status === "validated" && <button onClick={async () => { await api.updateSkill(skill.id, "enabled"); await load(); }}><Check size={14} />启用</button>}
               {skill.status === "enabled" && <button onClick={async () => { await api.updateSkill(skill.id, "disabled"); await load(); }}>停用</button>}
               {skill.status === "disabled" && <button onClick={async () => { await api.updateSkill(skill.id, "enabled"); await load(); }}>重新启用</button>}
-            </footer>
+            </footer>}
           </article>
         ))}
       </div>
@@ -143,7 +147,13 @@ function SkillsPage() {
   );
 }
 
-function KnowledgePage() {
+function KnowledgePage({
+  canManageSystem,
+  userId
+}: {
+  canManageSystem: boolean;
+  userId: number;
+}) {
   const [status, setStatus] = useState<KnowledgeStatus | null>(null);
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
   const [error, setError] = useState("");
@@ -164,7 +174,7 @@ function KnowledgePage() {
         <label className="file-action"><FileUp size={15} />导入 md / txt / pdf<input hidden type="file" accept=".md,.txt,.pdf" onChange={async (event) => {
           const file = event.target.files?.[0]; if (file) { await api.importKnowledge(file); await load(); }
         }} /></label>
-        <button onClick={async () => { await api.rebuildKnowledge(true); await load(); }} disabled={status?.status === "building"}>{status?.status === "building" ? <LoadingDots label="重建知识索引" /> : <RefreshCw size={15} />}重建向量索引</button>
+        {canManageSystem && <button onClick={async () => { await api.rebuildKnowledge(true); await load(); }} disabled={status?.status === "building"}>{status?.status === "building" ? <LoadingDots label="重建知识索引" /> : <RefreshCw size={15} />}重建向量索引</button>}
       </div>
       {error && <p className="management-error">{error}</p>}
       <div className="source-table">
@@ -173,10 +183,12 @@ function KnowledgePage() {
           <div className="source-row" key={source.id}>
             <span><b>{source.title}</b><small>{source.source_type} · {source.verified ? "已登记" : "待核验"}</small></span>
             <span>{source.institution || "机构待核验"}<small>{source.version || source.published_at || "版本未知"}</small></span>
-            <select value={source.status} onChange={async (event) => {
-              const next = await api.updateKnowledgeSource(source.id, { status: event.target.value as KnowledgeSource["status"] });
-              setSources((current) => current.map((item) => item.id === source.id ? next : item));
-            }}><option value="unknown">未知</option><option value="current">有效</option><option value="expired">失效</option><option value="superseded">已替代</option></select>
+            {(canManageSystem || source.imported_by === userId) ? (
+              <select value={source.status} onChange={async (event) => {
+                const next = await api.updateKnowledgeSource(source.id, { status: event.target.value as KnowledgeSource["status"] });
+                setSources((current) => current.map((item) => item.id === source.id ? next : item));
+              }}><option value="unknown">未知</option><option value="current">有效</option><option value="expired">失效</option><option value="superseded">已替代</option></select>
+            ) : <span>{source.status}</span>}
           </div>
         ))}
       </div>
@@ -204,12 +216,22 @@ function CapabilitiesPage({ initial }: { initial: Capability[] }) {
   );
 }
 
-export function ManagementViews({ view, capabilities }: { view: ManagementView; capabilities: Capability[] }) {
+export function ManagementViews({
+  view,
+  capabilities,
+  canManageSystem,
+  userId
+}: {
+  view: ManagementView;
+  capabilities: Capability[];
+  canManageSystem: boolean;
+  userId: number;
+}) {
   return (
     <section className="management-page">
       {view === "memories" && <MemoriesPage />}
-      {view === "skills" && <SkillsPage />}
-      {view === "knowledge" && <KnowledgePage />}
+      {view === "skills" && <SkillsPage canManageSystem={canManageSystem} />}
+      {view === "knowledge" && <KnowledgePage canManageSystem={canManageSystem} userId={userId} />}
       {view === "capabilities" && <CapabilitiesPage initial={capabilities} />}
     </section>
   );

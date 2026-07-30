@@ -12,7 +12,12 @@ from app.domain.models import MemoryRecord
 from app.knowledge.retrieval import HybridKnowledgeRetriever
 from app.knowledge.sources import SourceRegistry, _atomic_json
 from app.runtime.agents import AgentScopeRunner
-from app.services.state import MemoryStore, SkillStore, atomic_json
+from app.services.state import (
+    MemoryStore,
+    PersistentStateError,
+    SkillStore,
+    atomic_json,
+)
 from scripts.build_knowledge_base import SourceSpec, collect_documents
 from tests.fakes import FakeCapabilityClients
 
@@ -99,6 +104,49 @@ def test_atomic_source_registry_writes_are_safe_under_concurrency(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_user_knowledge_sources_are_isolated_in_listing_and_retrieval(tmp_path):
+    config = build_settings(tmp_path)
+    raw = config.resolve_path(config.KNOWLEDGE_RAW_DIR)
+    raw.mkdir(parents=True)
+    public_path = raw / "public.md"
+    public_path.write_text(
+        "# Public\n\npublicbaseline retinal evidence available to every authenticated user.",
+        "utf-8",
+    )
+    owner_path = raw / "owner-a.md"
+    owner_path.write_text(
+        "# Private\n\nowneralpha confidential retinal observation only for the importing user.",
+        "utf-8",
+    )
+    registry = SourceRegistry(config)
+    private_source = registry.register_upload(
+        owner_path,
+        user_id=101,
+        title="Owner A private source",
+    )
+
+    owner_sources = registry.list(user_id=101)
+    other_sources = registry.list(user_id=202)
+    assert private_source.id in {item.id for item in owner_sources}
+    assert private_source.id not in {item.id for item in other_sources}
+    assert any(item.imported_by is None for item in other_sources)
+
+    retriever = HybridKnowledgeRetriever(config)
+    owner_results = await retriever.search(
+        "owneralpha",
+        top_k=3,
+        user_id=101,
+    )
+    other_results = await retriever.search(
+        "owneralpha",
+        top_k=3,
+        user_id=202,
+    )
+    assert any(item.title == private_source.title for item in owner_results)
+    assert all(item.title != private_source.title for item in other_results)
+
+
+@pytest.mark.asyncio
 async def test_memory_conflict_ranking_and_disable(tmp_path):
     store = MemoryStore(build_settings(tmp_path))
     first = await store.create(
@@ -126,6 +174,28 @@ async def test_memory_conflict_ranking_and_disable(tmp_path):
     assert await store.search(1, "右眼晶状体")
     await store.set_enabled(1, False)
     assert await store.search(1, "右眼晶状体") == []
+
+
+@pytest.mark.asyncio
+async def test_corrupt_memory_state_fails_closed_without_overwrite(tmp_path):
+    config = build_settings(tmp_path)
+    path = config.resolve_path(config.MEMORY_STATE_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{broken-json", "utf-8")
+    store = MemoryStore(config)
+
+    with pytest.raises(PersistentStateError):
+        await store.list(1)
+    with pytest.raises(PersistentStateError):
+        await store.create(
+            MemoryRecord(
+                user_id=1,
+                category="preference",
+                content="回答简洁",
+                source="用户确认",
+            ),
+        )
+    assert path.read_text("utf-8") == "{broken-json"
 
 
 @pytest.mark.asyncio
@@ -216,3 +286,10 @@ plugins: [aux_diagnosis]
         path.name == "1.2.0"
         for path in runner._enabled_skill_paths("ClinicalReasoningAgent")
     )
+
+
+@pytest.mark.asyncio
+async def test_safety_critical_skill_cannot_be_disabled_online(tmp_path):
+    store = SkillStore(build_settings(tmp_path))
+    with pytest.raises(ValueError, match="安全关键"):
+        await store.set_status("red_flag_triage", "disabled")

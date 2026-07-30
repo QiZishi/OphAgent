@@ -225,6 +225,12 @@ test("项目、文件、插件、记忆、知识库和技能入口都可实际�
     await page.getByRole("navigation", { name: "工作区" }).getByRole("button", { name: navigation, exact: true }).click();
     await expect(page.getByRole("heading", { name: heading, exact: true }).first()).toBeVisible();
   }
+  await page.getByRole("navigation", { name: "工作区" }).getByRole("button", { name: "技能", exact: true }).click();
+  await expect(page.getByText("系统级 Skill 由管理员维护")).toBeVisible();
+  await expect(page.getByText("导入候选 SKILL.md")).toHaveCount(0);
+  await page.getByRole("navigation", { name: "工作区" }).getByRole("button", { name: "知识库", exact: true }).click();
+  await expect(page.getByRole("button", { name: "重建向量索引" })).toHaveCount(0);
+  await page.getByRole("navigation", { name: "工作区" }).getByRole("button", { name: "设置", exact: true }).click();
   await expect(page.getByRole("region", { name: "持续改进状态" })).toContainText("生产自动变更：关闭");
   await expect(page.getByRole("region", { name: "持续改进状态" })).toContainText("待离线评测候选");
 });

@@ -12,6 +12,7 @@ OFFLINE_REVIEW_CAPABILITIES = {
     "refund",
     "tool_use",
 }
+SAFETY_CRITICAL_SKILLS = {"red_flag_triage"}
 
 
 def requires_offline_skill_review(

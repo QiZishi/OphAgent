@@ -16,7 +16,7 @@ from app.api.dependencies import (
     get_runtime_store,
     get_skill_store,
 )
-from app.auth.security import get_current_user
+from app.auth.security import get_current_user, require_admin
 from app.core.config import settings
 from app.db.crud import record_audit
 from app.db.database import get_session
@@ -497,7 +497,7 @@ async def list_skills(
 @router.post("/skills/import", response_model=SkillRecord, status_code=201)
 async def import_skill(
     payload: SkillImport,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     store: SkillStore = Depends(get_skill_store),
     session: Session = Depends(get_session),
 ):
@@ -512,7 +512,7 @@ async def import_skill(
 @router.post("/skills/{skill_id}/validate", response_model=SkillRecord)
 async def validate_skill(
     skill_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     store: SkillStore = Depends(get_skill_store),
     session: Session = Depends(get_session),
 ):
@@ -528,7 +528,7 @@ async def validate_skill(
 async def update_skill(
     skill_id: str,
     payload: SkillStatusUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     store: SkillStore = Depends(get_skill_store),
     session: Session = Depends(get_session),
 ):
@@ -556,7 +556,11 @@ async def search_knowledge(
     current_user: User = Depends(get_current_user),
     clients: CapabilityClients = Depends(get_capability_clients),
 ):
-    result = await clients.retrieve_medical_evidence(q, top_k)
+    result = await clients.retrieve_medical_evidence(
+        q,
+        top_k,
+        user_id=int(current_user.id),
+    )
     return {"query": q, **result.data}
 
 
@@ -573,7 +577,10 @@ async def knowledge_status(
 
 @router.get("/knowledge/sources", response_model=list[KnowledgeSource])
 async def list_knowledge_sources(current_user: User = Depends(get_current_user)):
-    return SourceRegistry(settings).list()
+    return SourceRegistry(settings).list(
+        user_id=int(current_user.id),
+        include_private=current_user.role == "admin",
+    )
 
 
 class KnowledgeSourceUpdate(BaseModel):
@@ -596,8 +603,15 @@ async def update_knowledge_source(
     clients: CapabilityClients = Depends(get_capability_clients),
     session: Session = Depends(get_session),
 ):
+    registry = SourceRegistry(settings)
     try:
-        updated = SourceRegistry(settings).update(
+        source = registry.get(source_id)
+        if (
+            current_user.role != "admin"
+            and source.imported_by != int(current_user.id)
+        ):
+            raise HTTPException(status_code=404, detail="Knowledge source not found")
+        updated = registry.update(
             source_id,
             payload.model_dump(exclude_none=True),
         )
@@ -649,7 +663,7 @@ async def import_knowledge_source(
 async def rebuild_knowledge_index(
     background_tasks: BackgroundTasks,
     include_embeddings: bool = True,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     clients: CapabilityClients = Depends(get_capability_clients),
     session: Session = Depends(get_session),
 ):

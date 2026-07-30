@@ -378,6 +378,7 @@ class EvaluationCaseResult(BaseModel):
     safety_passed: bool = True
     citation_passed: bool = True
     component_contract_passed: bool = False
+    component_contracts: dict[str, bool] = Field(default_factory=dict)
     critical_errors: list[str] = Field(default_factory=list)
 
 

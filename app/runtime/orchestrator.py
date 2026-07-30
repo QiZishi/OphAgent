@@ -533,6 +533,7 @@ class RunOrchestrator:
             set_context(
                 run.route.selected_plugins if run.route and run.route.selected_plugins else "core",
                 run.input.requested_skills,
+                run.user_id,
             )
         set_skill_utility = getattr(runner, "set_skill_utility_provider", None)
         if callable(set_skill_utility):
@@ -786,36 +787,6 @@ class RunOrchestrator:
                 error_code=exc.code,
             )
         except Exception as exc:
-            if node.id in {"answer", "report"}:
-                events = await self.store.get_events(run.id)
-                partial_answer = "".join(
-                    str(event.data.get("delta") or "")
-                    for event in sorted(events, key=lambda item: item.sequence)
-                    if event.type == "answer.delta"
-                ).strip()
-                if partial_answer:
-                    node.status = NodeStatus.COMPLETED
-                    node.completed_at = utc_now()
-                    node.output = {
-                        "answer": partial_answer,
-                        "partial": True,
-                        "postprocessing_error": str(exc),
-                    }
-                    run.warnings.append(
-                        "正文已生成并保留，但生成后的校验或记账未完全完成"
-                    )
-                    await self._event(
-                        run,
-                        "agent.completed",
-                        f"{node.title}正文已保留，后处理存在警告",
-                        data={
-                            "node_id": node.id,
-                            "partial": True,
-                            "postprocessing_error": str(exc),
-                        },
-                        duration_ms=int((time.monotonic() - started) * 1000),
-                    )
-                    return
             node.status = NodeStatus.FAILED
             node.error_code = getattr(exc, "code", "node_failed")
             node.output = {"status": "failed", "detail": str(exc)}
@@ -884,38 +855,17 @@ class RunOrchestrator:
             async with asyncio.timeout(remaining_seconds):
                 stream_method = getattr(runner, "ask_stream", None)
                 if stream and callable(stream_method):
-                    pending_deltas: list[str] = []
-                    pending_length = 0
-                    last_flush = time.monotonic()
+                    async def buffer_unvalidated_delta(delta: str) -> None:
+                        # Provider streaming is an internal transport detail.
+                        # Public answer.delta events are emitted only after all
+                        # output guardrails and citation checks have completed.
+                        del delta
 
-                    async def flush_deltas() -> None:
-                        nonlocal pending_length, last_flush
-                        if not pending_deltas:
-                            return
-                        combined = "".join(pending_deltas)
-                        pending_deltas.clear()
-                        pending_length = 0
-                        last_flush = time.monotonic()
-                        await self._event(
-                            run,
-                            "answer.delta",
-                            "正在生成回答",
-                            data={"delta": combined},
-                        )
-
-                    async def emit_delta(delta: str) -> None:
-                        nonlocal pending_length
-                        pending_deltas.append(delta)
-                        pending_length += len(delta)
-                        if (
-                            pending_length >= 96
-                            or "\n\n" in delta
-                            or time.monotonic() - last_flush >= 0.18
-                        ):
-                            await flush_deltas()
-
-                    reply = await stream_method(role, prompt, emit_delta)
-                    await flush_deltas()
+                    reply = await stream_method(
+                        role,
+                        prompt,
+                        buffer_unvalidated_delta,
+                    )
                 else:
                     reply = await runner.ask(role, prompt)
             span.set_attribute("gen_ai.usage.input_tokens", reply.prompt_tokens)
@@ -948,7 +898,27 @@ class RunOrchestrator:
                 "不得虚构医学来源，不要生成报告格式。"
             )
             answer = await self._ask(run, runner, "DirectAnswerAgent", prompt, stream=stream)
-            return {"answer": answer}
+            answer = _moderate_unconfirmed_medical_language(answer, run.risk_level)
+            banner = emergency_banner(run.clinical_state)
+            if banner:
+                answer = banner + "\n\n" + answer
+            validation = self._client_context.get().validate_citations(answer, [])
+            output_validation = _validate_answer_output(
+                answer,
+                query=run.input.query,
+                evidence=[],
+                citation_validation=validation.data,
+            )
+            if not output_validation["valid"]:
+                raise ValueError(
+                    "快速回答未通过输出校验："
+                    + ",".join(output_validation["issues"])
+                )
+            return {
+                "answer": answer,
+                "citation_validation": validation.data,
+                "output_validation": output_validation,
+            }
         context = self._completed_context(run)
         evidence_raw = (context.get("evidence") or {}).get("evidence", [])
         evidence = [EvidenceItem.model_validate(item) for item in evidence_raw]
@@ -1162,7 +1132,11 @@ class RunOrchestrator:
                 f"{conversation_context.previous_query}\n"
                 f"本轮追问：{run.input.query}"
             )
-        local = await clients.retrieve_medical_evidence(retrieval_query, top_k=6)
+        local = await clients.retrieve_medical_evidence(
+            retrieval_query,
+            top_k=6,
+            user_id=run.user_id,
+        )
         evidence = list(local.data.get("evidence", []))
         needs_fresh = any(term in run.input.query for term in ("最新", "目前", "今年", "2026", "新指南"))
         if (

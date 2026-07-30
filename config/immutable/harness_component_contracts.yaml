@@ -83,6 +83,21 @@ components:
       - External failures are explicit and cannot fabricate successful results.
       - Online evolution cannot expand permissions or dependencies.
     online_mutable_state: [bounded_low_risk_selection_utility]
+  - id: identity_and_environment
+    paths: [app/api, app/auth, app/db, app/runtime/store.py]
+    core_definition: Enforces user, tenant, resource and execution-environment boundaries.
+    essential_mechanisms:
+      - User-owned resources are visible and mutable only within their ownership boundary.
+      - System-wide Skill, policy and shared-corpus mutations require trusted authority.
+      - Runtime state from one user or tenant cannot become another user's context or evidence.
+    online_mutable_state: [user_sessions, user_owned_resources]
+  - id: user_interface
+    paths: [frontend/src]
+    core_definition: Presents durable run state and only safety-validated public output.
+    essential_mechanisms:
+      - Unvalidated model deltas are never presented as final or trusted output.
+      - Failed, cancelled and partial states remain distinguishable from successful completion.
+    online_mutable_state: [presentation_preferences]
   - id: evolution
     paths: [app/evolution, config/immutable]
     core_definition: Improves bounded behavior while keeping candidate generation separate from trusted promotion.

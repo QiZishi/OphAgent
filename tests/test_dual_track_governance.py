@@ -207,6 +207,8 @@ def test_harness_components_have_immutable_core_contracts():
         "knowledge_retrieval",
         "safety",
         "tools_and_plugins",
+        "identity_and_environment",
+        "user_interface",
         "evolution",
         "observability",
     }
@@ -240,3 +242,50 @@ def test_component_contract_failure_blocks_promotion_decision(tmp_path):
     decision = harness.decide(baseline, candidate)
     assert not decision.accepted
     assert any("组件核心契约" in reason for reason in decision.reasons)
+
+
+def test_affected_component_requires_named_contract_evidence(tmp_path):
+    harness, repo = build_harness(tmp_path)
+    base = git(repo, "rev-parse", "HEAD")
+    proposal = harness.create_proposal(
+        EvolutionProposal(
+            id="evo_" + "6" * 32,
+            provider="manual",
+            target_failure_cluster="runtime-contract-gap",
+            mutation_paths=["app/runtime/feature.py"],
+            expected_behavior_change="修改运行时行为",
+            risk="可能破坏组件核心机制",
+            activation_condition="逐组件契约通过",
+            base_commit=base,
+        ),
+    )
+    worktree = harness.isolate(proposal.id)
+    (worktree / "app" / "runtime" / "feature.py").write_text("VALUE = 4\n", "utf-8")
+    candidate_commit = harness.freeze_candidate(proposal.id)
+    baseline_cases = cases()
+    candidate_cases = [
+        item.model_copy(update={"component_contracts": {}})
+        for item in cases(0.1)
+    ]
+    baseline = harness.attest_evaluation(
+        EvaluationRunResult(
+            proposal_id=proposal.id,
+            variant="baseline",
+            phase="sealed_test",
+            commit=base,
+            cases=baseline_cases,
+        ),
+    )
+    candidate = harness.attest_evaluation(
+        EvaluationRunResult(
+            proposal_id=proposal.id,
+            variant="candidate",
+            phase="sealed_test",
+            commit=candidate_commit,
+            cases=candidate_cases,
+        ),
+    )
+    harness.record_evaluation(baseline)
+    harness.record_evaluation(candidate)
+    with pytest.raises(EvolutionPolicyError, match="缺少受影响组件契约证据"):
+        harness.approve(proposal.id, "contract-reviewer")

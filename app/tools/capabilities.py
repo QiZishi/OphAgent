@@ -181,8 +181,18 @@ class CapabilityClients:
         self.health["medical_image_analysis"] = "ready"
         return ToolResult(status="ok", capability="medical_image_analysis", data=parsed)
 
-    async def retrieve_medical_evidence(self, query: str, top_k: int = 6) -> ToolResult:
-        evidence = await self.retriever.search(query, top_k=top_k)
+    async def retrieve_medical_evidence(
+        self,
+        query: str,
+        top_k: int = 6,
+        *,
+        user_id: int | None = None,
+    ) -> ToolResult:
+        evidence = await self.retriever.search(
+            query,
+            top_k=top_k,
+            user_id=user_id,
+        )
         self.health["medical_retrieval"] = "ready"
         return ToolResult(
             status="ok",
