@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://qizishi.github.io/OphVLM-R1/"><img src="https://img.shields.io/badge/项目-主页-2b6cb0?style=for-the-badge" alt="项目主页"></a>
   <a href="https://github.com/QiZishi/OphAgent/"><img src="https://img.shields.io/badge/代码-OphAgent-181717?style=for-the-badge&logo=github" alt="OphAgent 代码"></a>
+  <a href="https://moonnight-ophagent.ms.show/"><img src="https://img.shields.io/badge/▶%20在线体验-ModelScope-624AFF?style=for-the-badge" alt="ModelScope 在线体验"></a>
 </p>
 <p align="center">
   <a href="https://huggingface.co/QiZishi/OphVLM-R1"><img src="https://img.shields.io/badge/🤗%20模型-Hugging%20Face-FFD21E?style=for-the-badge" alt="Hugging Face 模型"></a>
@@ -27,6 +28,7 @@
 
 - **项目主页**：<https://qizishi.github.io/OphVLM-R1/>
 - **OphAgent 系统代码**：[GitHub](https://github.com/QiZishi/OphAgent/)
+- **OphAgent 在线体验**：[ModelScope Studio](https://www.modelscope.cn/studios/MoonNight/OphAgent) — 直达链接 <https://moonnight-ophagent.ms.show/>
 - **OphVLM-R1 模型**：[Hugging Face](https://huggingface.co/QiZishi/OphVLM-R1) | [ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1)
 - **OphReason-Vision 数据集**：[Hugging Face](https://huggingface.co/datasets/QiZishi/OphReason-Vision) | [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision)
 

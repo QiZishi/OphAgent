@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://qizishi.github.io/OphVLM-R1/"><img src="https://img.shields.io/badge/Project-Page-2b6cb0?style=for-the-badge" alt="Project page"></a>
   <a href="https://github.com/QiZishi/OphAgent/"><img src="https://img.shields.io/badge/Code-OphAgent-181717?style=for-the-badge&logo=github" alt="OphAgent code"></a>
+  <a href="https://moonnight-ophagent.ms.show/"><img src="https://img.shields.io/badge/▶%20Online%20Demo-ModelScope-624AFF?style=for-the-badge" alt="Online demo on ModelScope"></a>
 </p>
 <p align="center">
   <a href="https://huggingface.co/QiZishi/OphVLM-R1"><img src="https://img.shields.io/badge/🤗%20Model-Hugging%20Face-FFD21E?style=for-the-badge" alt="Model on Hugging Face"></a>
@@ -27,6 +28,7 @@
 
 - **Project page**: <https://qizishi.github.io/OphVLM-R1/>
 - **OphAgent system code**: [GitHub](https://github.com/QiZishi/OphAgent/)
+- **OphAgent online demo**: [ModelScope Studio](https://www.modelscope.cn/studios/MoonNight/OphAgent) — live at <https://moonnight-ophagent.ms.show/>
 - **OphVLM-R1 model**: [Hugging Face](https://huggingface.co/QiZishi/OphVLM-R1) | [ModelScope](https://www.modelscope.cn/models/MoonNight/OphVLM-R1)
 - **OphReason-Vision dataset**: [Hugging Face](https://huggingface.co/datasets/QiZishi/OphReason-Vision) | [ModelScope](https://www.modelscope.cn/datasets/MoonNight/OphReason-Vision)
 
