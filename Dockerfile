@@ -27,5 +27,8 @@ COPY . .
 # Vite-built frontend (served by FastAPI at /)
 COPY --from=frontend-build /frontend/dist ./frontend/dist
 
+# Entrypoint probes /mnt/workspace persistence and exports data paths before starting
+COPY docker-entrypoint.sh ./
+
 EXPOSE 7860
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "7860"]
+CMD ["/bin/sh", "docker-entrypoint.sh"]

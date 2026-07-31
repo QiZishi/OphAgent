@@ -227,10 +227,15 @@ async def upload_file(
         kind = "audio"
     else:
         kind = "document"
+    # Absolute paths (e.g. /mnt/workspace/...) cannot be made relative to the project root.
+    try:
+        stored_path = str(target.relative_to(settings.project_root))
+    except ValueError:
+        stored_path = str(target)
     record = AttachmentRecord(
         user_id=int(current_user.id),
         original_filename=Path(file.filename).name,
-        stored_path=str(target.relative_to(settings.project_root)),
+        stored_path=stored_path,
         mime_type=file.content_type or mimetypes.guess_type(file.filename)[0] or "application/octet-stream",
         size=len(content),
         checksum=hashlib.sha256(content).hexdigest(),
