@@ -50,10 +50,11 @@ if probe; then
         "${PERSIST_BASE}/knowledge/raw" \
         "${PERSIST_BASE}/knowledge/index"
 
-    # 进化门禁密钥文件：幂等生成，重启保留
+    # 进化门禁密钥文件：幂等生成，重启保留；0600 防止同容器其他进程读取
     if [ ! -f "${PERSIST_BASE}/evolution/gate_secret" ]; then
         python3 -c "import secrets; print(secrets.token_hex(32))" \
             > "${PERSIST_BASE}/evolution/gate_secret"
+        chmod 600 "${PERSIST_BASE}/evolution/gate_secret"
         echo "PERSIST: generated evolution gate secret"
     fi
 else
