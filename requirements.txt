@@ -1,4 +1,6 @@
 agentscope==1.0.21
+# Pin MCP SDK: newer versions renamed streamablehttp_client, breaking agentscope imports
+mcp==1.28.1
 sounddevice==0.5.5
 tiktoken==0.13.0
 fastapi==0.138.2
