@@ -1,0 +1,37 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+
+# Python
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Frontend build caches
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+frontend/*.tsbuildinfo
+
+# Runtime data (recreated in container)
+data/runtime
+data/evolution
+data/knowledge_base/index
+app/db/*.db
+app/static/uploads/*
+.worktrees
+skills/.candidates
+
+# Local-only content
+docs
+ophthalmic_plugin_test_cases
+tests
